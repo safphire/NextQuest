@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup rules for API < 31 (mirrors data_extraction_rules.xml). -->
+<full-backup-content>
+    <include domain="database" path="." />
+    <include domain="file" path="datastore/" />
+    <include domain="sharedpref" path="." />
+    <exclude domain="sharedpref" path="ai_secrets.xml" />
+</full-backup-content>

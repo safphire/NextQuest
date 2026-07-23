@@ -39,6 +39,18 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug
 
+      # Room discipline (CLAUDE.md): exported schemas must be committed. Fails
+      # when KSP generates a schema that differs from (or is missing in) git,
+      # and prints the generated JSON so it can be committed.
+      - name: Check committed Room schemas
+        run: |
+          if [ -n "$(git status --porcelain app/schemas)" ]; then
+            echo "::error::app/schemas is out of date — commit the generated schema below"
+            git status --porcelain app/schemas
+            find app/schemas -name '*.json' -print -exec cat {} \;
+            exit 1
+          fi
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
