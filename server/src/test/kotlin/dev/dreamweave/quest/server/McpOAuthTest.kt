@@ -154,7 +154,7 @@ class McpOAuthTest {
         val init = rpc(token, "initialize", buildJsonObject { put("protocolVersion", "2025-03-26"); put("capabilities", JsonObject(emptyMap())) })
         val result = init["result"]!!.jsonObject
         assertEquals("2025-03-26", result.str("protocolVersion"))
-        assertEquals("NextQuest", result["serverInfo"]!!.jsonObject.str("name"))
+        assertEquals(Config.APP_NAME_DEFAULT, result["serverInfo"]!!.jsonObject.str("name"))
         assertContains(result.str("instructions"), "cannot change anything directly")
         // Unknown versions get the newest supported.
         assertEquals("2025-06-18", rpc(token, "initialize", buildJsonObject { put("protocolVersion", "1999-01-01") })["result"]!!.jsonObject.str("protocolVersion"))

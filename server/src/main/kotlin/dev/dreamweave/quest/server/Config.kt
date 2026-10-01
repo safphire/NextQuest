@@ -6,14 +6,15 @@ import java.io.File
 
 /**
  * Server settings, all from environment variables (see docker-compose.yml).
- * `APP_NAME` is the one place the product name lives on the server.
+ * `APP_NAME` names the server; [APP_NAME_DEFAULT] is the one place the product name lives
+ * in server code.
  */
 data class Config(
     val port: Int = 8080,
     /** The URL people and AI clients use to reach this server, without a trailing slash. */
     val publicUrl: String,
     val adminPassword: String,
-    val appName: String = "NextQuest",
+    val appName: String = APP_NAME_DEFAULT,
     val dataDir: File = File("data"),
     val timeZone: TimeZone = TimeZone.currentSystemDefault(),
     /** Single-user mode: every row belongs to this user. Hosted mode would map logins to users. */
@@ -42,18 +43,20 @@ data class Config(
     val dbFile: File get() = File(dataDir, "quest.db")
 
     companion object {
+        const val APP_NAME_DEFAULT = "NextQuest"
+
         fun fromEnv(env: Map<String, String> = System.getenv()): Config {
             val port = env["PORT"]?.toIntOrNull() ?: 8080
             return Config(
                 port = port,
                 publicUrl = (env["PUBLIC_URL"] ?: "http://localhost:$port").trimEnd('/'),
                 adminPassword = env["ADMIN_PASSWORD"] ?: error("Set ADMIN_PASSWORD (at least 12 characters)."),
-                appName = env["APP_NAME"]?.takeIf { it.isNotBlank() } ?: "NextQuest",
+                appName = env["APP_NAME"]?.takeIf { it.isNotBlank() } ?: APP_NAME_DEFAULT,
                 dataDir = File(env["DATA_DIR"] ?: "data"),
                 timeZone = env["TZ"]?.takeIf { it.isNotBlank() }?.let { runCatching { TimeZone.of(it) }.getOrNull() } ?: TimeZone.currentSystemDefault(),
                 mcpCallsPerMinute = env["MCP_CALLS_PER_MINUTE"]?.toIntOrNull() ?: 60,
                 proposalsPerHour = env["PROPOSALS_PER_HOUR"]?.toIntOrNull() ?: 30,
-                allowedOrigins = env["ALLOWED_ORIGINS"]?.split(',')?.map { it.trim().trimEnd('/') }?.filter { it.isNotEmpty() }?.toSet()
+                allowedOrigins = env["ALLOWED_ORIGINS"]?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim().trimEnd('/') }?.filter { it.isNotEmpty() }?.toSet()
                     ?: setOf("https://claude.ai", "https://chatgpt.com"),
                 trustProxy = env["TRUST_PROXY"]?.trim()?.takeIf { it.isNotEmpty() }?.let { v ->
                     v.toIntOrNull() ?: error("TRUST_PROXY must be a number of proxy hops (0 = no proxy), got '$v'")

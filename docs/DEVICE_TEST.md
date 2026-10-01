@@ -15,10 +15,17 @@ For sync and AI, you need a server reachable over HTTPS (README, "Self-hosting")
 - [ ] Brain-dump 6 items. Rotate the phone mid-way: nothing typed is lost.
 - [ ] Pick up to the cap, give each a first step, finish. The rest are in Later.
 - [ ] Today shows each tracked quest with exactly one next step.
-- [ ] Tap **+**, type, press Enter: saved to the inbox in under 2 s.
+- [ ] Tap **+**, type, press Enter: saved to the inbox in under 2 s, and the
+      capture panel closes at once (D-201). Repeat quickly 5 times: it never
+      stays open or saves twice.
+- [ ] Capture panel with gesture navigation and with 3-button navigation: the
+      keyboard never covers the field, and the panel sits above the
+      navigation bar. Back and a tap outside close it.
 - [ ] Done on a step: haptic, "+15 XP", then "What's next?". Set it; Today
       updates. The whole loop from capture to next step takes under 30 s.
 - [ ] "Not yet — keep the step open" shows "no XP yet", and no XP is added.
+- [ ] On "What's next?", Back and a tap outside do nothing; only its buttons
+      close it.
 
 ## 2. Notifications and exact alarms
 - [ ] Set a step reminder 2 minutes ahead. The first time, Android asks for
@@ -83,6 +90,12 @@ For sync and AI, you need a server reachable over HTTPS (README, "Self-hosting")
       upload". Turn the network on: they upload without opening the app.
 - [ ] Remove the device on the server page. The app says it was removed and
       asks to pair again. No data is lost on the phone.
+- [ ] Restore the phone from an Android backup (new phone or reset): the app
+      shows sync as not paired and asks to pair again (the token is never
+      backed up). Pairing again uploads the log.
+- [ ] Stop the server, replace its data volume with an older backup, start it,
+      and make changes on a second phone. Then sync the first phone: its
+      quests reappear on the server and on the second phone.
 
 ## 8. Claude and ChatGPT connectors
 - [ ] Claude → Settings → Connectors → Add custom connector →
