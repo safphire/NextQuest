@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # kotlinx.serialization: keep generated serializers for @Serializable classes.
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.**

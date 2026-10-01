@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <resources>
     <!-- The ONLY place the product name lives in the app (rename-ready, see docs/DECISIONS.md).
          Everything else references @string/app_name or stringResource(R.string.app_name). -->

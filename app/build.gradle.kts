@@ -117,4 +117,5 @@ dependencies {
     androidTestImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.kotlin.test)
 }

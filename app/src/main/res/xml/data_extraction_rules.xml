@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
     Android Auto Backup: the event log (database) and settings restore on
     reinstall or a new device. The sync device token is excluded — it is a
