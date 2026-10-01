@@ -40,6 +40,8 @@ androidxTestCore = "1.6.1"
 androidxTestJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
 androidxTestRules = "1.6.1"
+androidxTestOrchestrator = "1.5.1"
+androidxTestServices = "1.5.0"
 uiautomator = "2.3.0"
 
 [libraries]
@@ -98,6 +100,8 @@ androidx-test-core = { group = "androidx.test", name = "core-ktx", version.ref =
 androidx-test-junit = { group = "androidx.test.ext", name = "junit-ktx", version.ref = "androidxTestJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTestRules" }
+androidx-test-orchestrator = { group = "androidx.test", name = "orchestrator", version.ref = "androidxTestOrchestrator" }
+androidx-test-services = { group = "androidx.test.services", name = "test-services", version.ref = "androidxTestServices" }
 androidx-test-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 
 [plugins]

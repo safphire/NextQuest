@@ -13,26 +13,28 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.MainActivity
 import dev.dreamweave.quest.QuestApp
 import kotlinx.coroutines.launch
+import android.Manifest
+import android.os.Build
+import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.annotation.Config
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
  * Acceptance: every touch target is at least 48×48dp. Walks the main screens of a
- * phone-sized (360dp wide) app with some data and checks each clickable node's touch
+ * the app with some data on the emulator and checks each clickable node's touch
  * bounds (which include Material's minimum-interactive-size padding).
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [34], qualifiers = "w360dp-h740dp-xxhdpi")
 class TouchTargetTest {
-    init {
-        org.robolectric.shadows.ShadowLog.stream = System.out
-    }
+    // Granted up front: the system permission dialog would cover the app (D-302 asks after first launch).
+    @get:Rule(order = 0)
+    val notifications: GrantPermissionRule =
+        if (Build.VERSION.SDK_INT >= 33) GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS) else GrantPermissionRule.grant()
 
-    @get:Rule
+    @get:Rule(order = 1)
     val compose = createAndroidComposeRule<MainActivity>()
 
     private val container get() = (compose.activity.application as QuestApp).container

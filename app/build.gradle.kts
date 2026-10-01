@@ -23,6 +23,8 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Every instrumented test starts from a fresh install (cleared data, own process).
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
         // Links shown in Settings → About. Set at release time in gradle.properties;
         // empty values hide the link (rename-ready: no product name in code).
         buildConfigField("String", "SOURCE_URL", "\"${providers.gradleProperty("quest.sourceUrl").getOrElse("")}\"")
@@ -62,6 +64,7 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
     }
 
     lint {
@@ -125,6 +128,8 @@ dependencies {
     androidTestImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.kotlin.test)
+    androidTestUtil(libs.androidx.test.orchestrator)
+    androidTestUtil(libs.androidx.test.services)
 }
 
 // Full stack traces of failing tests in the console (CI logs are the only window into them).

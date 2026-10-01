@@ -21,10 +21,12 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.core.QuestStatus
+import android.Manifest
+import android.os.Build
+import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -33,13 +35,13 @@ import kotlin.test.assertTrue
  * Drives the real activity (no network anywhere) and checks the event log afterwards.
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [34])
 class CoreLoopUiTest {
-    init {
-        org.robolectric.shadows.ShadowLog.stream = System.out
-    }
+    // Granted up front: the system permission dialog would cover the app (D-302 asks after first launch).
+    @get:Rule(order = 0)
+    val notifications: GrantPermissionRule =
+        if (Build.VERSION.SDK_INT >= 33) GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS) else GrantPermissionRule.grant()
 
-    @get:Rule
+    @get:Rule(order = 1)
     val compose = createAndroidComposeRule<MainActivity>()
 
     private val repository get() = (compose.activity.application as QuestApp).container.repository
@@ -66,7 +68,7 @@ class CoreLoopUiTest {
         compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
     }
 
-    /** The single on-screen node matching [matcher] (Robolectric keeps closed sheets composed off-screen). */
+    /** The single on-screen node matching [matcher] (a closing sheet may still be composed off-screen). */
     private fun onScreen(matcher: SemanticsMatcher): SemanticsNodeInteraction {
         val height = compose.onAllNodes(isRoot()).fetchSemanticsNodes().maxOf { it.boundsInRoot.bottom }
         val ids = compose.onAllNodes(matcher).fetchSemanticsNodes().filter { it.boundsInRoot.top < height }.map { it.id }
@@ -91,8 +93,7 @@ class CoreLoopUiTest {
         // Never runBlocking on the main thread here: a commit started from the UI holds the
         // repository lock and resumes on this very thread (deadlock). Read the state flow.
         waitFor("the capture to reach the event log") { repository.state.value?.quests?.isNotEmpty() == true }
-        // (Under Robolectric the closed sheet's dialog window lingers off-screen, so don't wait
-        // for it to disappear; on a device it is gone — DEVICE_TEST.md §1.)
+        // (The closed sheet animates away; on-screen lookups below ignore it meanwhile.)
 
         // Board → Track → first step.
         compose.onNodeWithText("Open Board").performClick()
