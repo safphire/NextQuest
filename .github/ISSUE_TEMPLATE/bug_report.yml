@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Today
+        2. Tap Done on …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version (Settings → About) or server version
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Pixel 8, Android 15
+  - type: dropdown
+    id: sync
+    attributes:
+      label: Is sync enabled?
+      options: ["No (local only)", "Yes, self-hosted server", "Not sure"]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Remove anything personal (quest titles, server URLs, tokens) first.

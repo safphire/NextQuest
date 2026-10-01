@@ -1,18 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
 on:
   push:
+  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Unit tests + debug APK
+    name: Build, unit tests, lint, debug APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
@@ -24,7 +29,7 @@ jobs:
           java-version: "21"
 
       # Pin the exact SDK packages the build compiles against
-      # (compileSdk 35 / build-tools 35.0.0, mirrored in app/build.gradle.kts).
+      # (compileSdk 35 / build-tools 35.0.0, mirrored in gradle/libs.versions.toml).
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -33,27 +38,62 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests
-        run: ./gradlew test
+      - name: Unit tests (core, protocol, data incl. Room migrations under Robolectric, app, server)
+        run: ./gradlew test --continue
+
+      - name: Core coverage gate (>= 90% lines)
+        run: ./gradlew :core:koverVerify :core:koverXmlReport
+
+      - name: Android lint
+        run: ./gradlew :data:lintDebug :app:lintDebug
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug
 
-      # Room discipline (CLAUDE.md): exported schemas must be committed. Fails
-      # when KSP generates a schema that differs from (or is missing in) git,
-      # and prints the generated JSON so it can be committed.
-      - name: Check committed Room schemas
+      - name: Compile instrumented tests
+        run: ./gradlew :data:assembleDebugAndroidTest :app:assembleDebugAndroidTest
+
+      - name: Server distribution
+        run: ./gradlew :server:installDist
+
+      # Room discipline (CLAUDE.md): exported schemas must be committed, and
+      # /schema (JSON Schema of the wire protocol) must match the DTOs.
+      - name: Check generated files are committed
         run: |
-          if [ -n "$(git status --porcelain app/schemas)" ]; then
-            echo "::error::app/schemas is out of date — commit the generated schema below"
-            git status --porcelain app/schemas
-            find app/schemas -name '*.json' -print -exec cat {} \;
+          ./gradlew :protocol:generateSchemas
+          if [ -n "$(git status --porcelain data/schemas schema)" ]; then
+            echo "::error::Generated files are out of date — commit them:"
+            git status --porcelain data/schemas schema
+            git diff -- schema | head -200
+            find data/schemas -name '*.json' -newer settings.gradle.kts -print -exec cat {} \;
             exit 1
           fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: nextquest-debug
+          name: quest-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Upload reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: ignore
+
+  secrets:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git /repo --log-opts="--all" --redact --verbose

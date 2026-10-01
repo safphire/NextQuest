@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- v0 visual identity: dark warm ink + gold (SPEC.md §3) -->
-    <color name="ink">#0e0c09</color>
-    <color name="gold">#e6b455</color>
+    <!-- Mirrors the light tokens in ui/theme/Tokens.kt (pre-Compose window + widget). -->
+    <color name="background">#F3F6F1</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text">#12201B</color>
+    <color name="lime">#C8F135</color>
+    <color name="violet">#5B4BFF</color>
+    <color name="icon_background">#5B4BFF</color>
 </resources>
