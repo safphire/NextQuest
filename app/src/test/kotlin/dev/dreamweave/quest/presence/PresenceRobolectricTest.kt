@@ -8,9 +8,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.MainActivity
 import dev.dreamweave.quest.QuestApp
+import dev.dreamweave.quest.stopBackgroundWork
 import dev.dreamweave.quest.ui.ExternalRequest
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
@@ -24,6 +26,10 @@ import kotlin.test.assertTrue
 @Config(sdk = [34])
 class PresenceRobolectricTest {
     private val app: QuestApp get() = ApplicationProvider.getApplicationContext()
+
+    @After
+    fun stopAppWork() = app.stopBackgroundWork()
+
     private val c get() = app.container
     private val alarms get() = app.getSystemService(AlarmManager::class.java)
 

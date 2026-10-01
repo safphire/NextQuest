@@ -14,8 +14,10 @@ import dev.dreamweave.quest.core.QuestStatus
 import dev.dreamweave.quest.protocol.Snapshot
 import dev.dreamweave.quest.protocol.SnapshotCodec
 import dev.dreamweave.quest.protocol.SnapshotRead
+import dev.dreamweave.quest.stopBackgroundWork
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
+import org.junit.After
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
@@ -34,6 +36,10 @@ class VaultAndBackupsTest {
     val tmp = TemporaryFolder()
 
     private val app: QuestApp get() = ApplicationProvider.getApplicationContext()
+
+    @After
+    fun stopAppWork() = app.stopBackgroundWork()
+
     private val c get() = app.container
 
     private suspend fun mirror(root: File) = VaultWriter(app).mirror(DocumentFile.fromFile(root), c.repository.current(), c.repository.zone)

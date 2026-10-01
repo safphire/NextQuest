@@ -9,8 +9,10 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.QuestApp
+import dev.dreamweave.quest.stopBackgroundWork
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
@@ -31,6 +33,10 @@ import kotlin.test.assertTrue
 @Config(sdk = [34])
 class ReminderIntegrityTest {
     private val app: QuestApp get() = ApplicationProvider.getApplicationContext()
+
+    @After
+    fun stopAppWork() = app.stopBackgroundWork()
+
     private val c get() = app.container
     private val alarms get() = app.getSystemService(AlarmManager::class.java)
     private val notifications get() = app.getSystemService(NotificationManager::class.java)
