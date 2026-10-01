@@ -42,7 +42,13 @@ class Presence(
             val now = System.currentTimeMillis()
             scheduler.reschedule(state, settings.current(), now = now, zone = repository.zone)
             // Take down reminders whose step changed elsewhere (done, replaced, snoozed, skipped).
-            runCatching { Notifications.cancelStaleSteps(context) { stepId -> ReminderPlan.stillDue(state, stepId, now) } }
+            // Judged against the latest state, not this refresh's snapshot: a reminder posted while
+            // this refresh ran (its step scheduled after the snapshot) must not be taken down.
+            runCatching {
+                Notifications.cancelStaleSteps(context) { stepId ->
+                    ReminderPlan.stillDue(repository.state.value ?: state, stepId, System.currentTimeMillis())
+                }
+            }
             // Best effort and bounded: a widget host that never answers must not stall alarms.
             runCatching { withTimeout(10_000) { QuestWidget().updateAll(context) } }
         }
