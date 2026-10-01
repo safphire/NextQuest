@@ -1,0 +1,31 @@
+{
+    "title": "propose_add_subquest",
+    "type": "object",
+    "properties": {
+        "parent_id": {
+            "type": "string",
+            "description": "Top-level quest id."
+        },
+        "title": {
+            "type": "string",
+            "description": "Subquest title."
+        },
+        "next_step": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional first step of the subquest."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "parent_id",
+        "title",
+        "reason"
+    ],
+    "additionalProperties": false
+}

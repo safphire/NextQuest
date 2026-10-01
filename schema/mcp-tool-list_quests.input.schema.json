@@ -1,0 +1,14 @@
+{
+    "title": "list_quests",
+    "type": "object",
+    "properties": {
+        "status": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "One of inbox, tracked, later, done, dropped. Omit for all open quests."
+        }
+    },
+    "additionalProperties": false
+}

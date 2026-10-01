@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+package dev.dreamweave.quest.server
+
+import kotlinx.datetime.TimeZone
+import java.io.File
+
+/**
+ * Server settings, all from environment variables (see docker-compose.yml).
+ * `APP_NAME` is the one place the product name lives on the server.
+ */
+data class Config(
+    val port: Int = 8080,
+    /** The URL people and AI clients use to reach this server, without a trailing slash. */
+    val publicUrl: String,
+    val adminPassword: String,
+    val appName: String = "NextQuest",
+    val dataDir: File = File("data"),
+    val timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    /** Single-user mode: every row belongs to this user. Hosted mode would map logins to users. */
+    val userId: String = "owner",
+    val mcpCallsPerMinute: Int = 60,
+    val proposalsPerHour: Int = 30,
+    /** Browser origins allowed to call /mcp (requests without an Origin header are allowed). */
+    val allowedOrigins: Set<String> = setOf("https://claude.ai", "https://chatgpt.com"),
+    val accessTokenTtlMs: Long = 60 * 60 * 1000L,
+    val refreshTokenTtlMs: Long = 30L * 24 * 60 * 60 * 1000,
+) {
+    init {
+        require(adminPassword.length >= 12) { "ADMIN_PASSWORD must be at least 12 characters" }
+        require(publicUrl.startsWith("https://") || publicUrl.startsWith("http://")) { "PUBLIC_URL must be an http(s) URL" }
+    }
+
+    val secureCookies: Boolean get() = publicUrl.startsWith("https://")
+    val mcpUrl: String get() = "$publicUrl/mcp"
+    val dbFile: File get() = File(dataDir, "quest.db")
+
+    companion object {
+        fun fromEnv(env: Map<String, String> = System.getenv()): Config {
+            val port = env["PORT"]?.toIntOrNull() ?: 8080
+            return Config(
+                port = port,
+                publicUrl = (env["PUBLIC_URL"] ?: "http://localhost:$port").trimEnd('/'),
+                adminPassword = env["ADMIN_PASSWORD"] ?: error("Set ADMIN_PASSWORD (at least 12 characters)."),
+                appName = env["APP_NAME"]?.takeIf { it.isNotBlank() } ?: "NextQuest",
+                dataDir = File(env["DATA_DIR"] ?: "data"),
+                timeZone = env["TZ"]?.takeIf { it.isNotBlank() }?.let { runCatching { TimeZone.of(it) }.getOrNull() } ?: TimeZone.currentSystemDefault(),
+                mcpCallsPerMinute = env["MCP_CALLS_PER_MINUTE"]?.toIntOrNull() ?: 60,
+                proposalsPerHour = env["PROPOSALS_PER_HOUR"]?.toIntOrNull() ?: 30,
+                allowedOrigins = env["ALLOWED_ORIGINS"]?.split(',')?.map { it.trim().trimEnd('/') }?.filter { it.isNotEmpty() }?.toSet()
+                    ?: setOf("https://claude.ai", "https://chatgpt.com"),
+            )
+        }
+    }
+}

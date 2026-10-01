@@ -1,0 +1,51 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "push-request",
+    "type": "object",
+    "properties": {
+        "events": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "deviceId": {
+                        "type": "string"
+                    },
+                    "seq": {
+                        "type": "integer"
+                    },
+                    "ts": {
+                        "type": "integer"
+                    },
+                    "actor": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "required": [
+                    "id",
+                    "deviceId",
+                    "seq",
+                    "ts",
+                    "actor",
+                    "type",
+                    "payload"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "events"
+    ],
+    "additionalProperties": false
+}

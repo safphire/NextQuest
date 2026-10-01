@@ -1,0 +1,26 @@
+{
+    "title": "propose_complete_step",
+    "type": "object",
+    "properties": {
+        "quest_id": {
+            "type": "string",
+            "description": "Quest or subquest id."
+        },
+        "step_id": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional; defaults to the quest's current step."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "quest_id",
+        "reason"
+    ],
+    "additionalProperties": false
+}

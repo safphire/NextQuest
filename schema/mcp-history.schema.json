@@ -1,0 +1,47 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mcp-history",
+    "type": "object",
+    "properties": {
+        "days": {
+            "type": "integer"
+        },
+        "entries": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "at": {
+                        "type": "string"
+                    },
+                    "text": {
+                        "type": "string"
+                    },
+                    "xp": {
+                        "type": "integer"
+                    },
+                    "quest_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "by": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "at",
+                    "text",
+                    "by"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "days",
+        "entries"
+    ],
+    "additionalProperties": false
+}

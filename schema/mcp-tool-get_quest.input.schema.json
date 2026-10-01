@@ -1,0 +1,14 @@
+{
+    "title": "get_quest",
+    "type": "object",
+    "properties": {
+        "quest_id": {
+            "type": "string",
+            "description": "The quest id from get_today or list_quests."
+        }
+    },
+    "required": [
+        "quest_id"
+    ],
+    "additionalProperties": false
+}

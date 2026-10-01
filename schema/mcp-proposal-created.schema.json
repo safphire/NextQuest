@@ -1,0 +1,21 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mcp-proposal-created",
+    "type": "object",
+    "properties": {
+        "proposal_id": {
+            "type": "string"
+        },
+        "status": {
+            "type": "string"
+        },
+        "message": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "proposal_id",
+        "message"
+    ],
+    "additionalProperties": false
+}

@@ -18,7 +18,7 @@ kotlin {
 }
 
 application {
-    mainClass.set("dev.dreamweave.quest.server.MainKt")
+    mainClass.set("dev.dreamweave.quest.server.AppKt")
     applicationName = "quest-server"
 }
 

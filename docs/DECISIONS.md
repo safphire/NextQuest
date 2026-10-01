@@ -167,3 +167,112 @@ quest's own step; on a quest whose visible step belongs to a focused
 subquest it is refused with a message naming the subquest. A second
 `park_quest` for the same quest is refused, and pending parks free each slot
 only once.
+
+## P3 — Presence
+
+### D-301 · Reminders are planned, then armed
+`ReminderPlan.compute(state, settings, now, zone, firedAt)` is a pure function
+that yields everything that should be armed (digest, streak guard, step
+reminders). `ReminderScheduler` diffs that against what it armed last time and
+re-arms on every state or settings change, on boot, on time and time-zone
+changes, after an app update and when the exact-alarm grant changes. Because
+it is idempotent, every trigger calls it the same way. A step reminder whose
+time passed while the phone was off fires once after boot. The "fired" marker
+stops it from firing again.
+
+### D-302 · Alarm fallbacks
+- A step with `alarm = true` and the exact-alarm grant uses
+  `setAlarmClock`. That shows the alarm icon and is never deferred by Doze.
+  If full-screen intents are allowed, it also opens `AlarmActivity`.
+- Without the grant, everything uses `setAndAllowWhileIdle` (may be a few
+  minutes late). Settings explains this and links to the system screen.
+- Without notification permission nothing can be shown. The permission is
+  only asked for when the user first sets a reminder, and Settings shows its
+  state.
+
+### D-303 · Snooze is an event, Skip is a dismissal
+Snooze 1h writes `step.snoozed` (synced, so other devices don't ring as well).
+Skip records that this reminder was dismissed. The step stays current and is
+not completed. Done from a notification is the one path that may leave a
+quest without a next step (D-101). The quest then shows "Needs next step".
+
+### D-304 · Widget Done asks for the next step
+The Glance widget's Done opens a small translucent dialog activity instead of
+completing silently. Principle 4 has no widget exemption, so the widget asks
+for the next step the same way the app does.
+
+## P4 — Durability
+
+### D-401 · The vault mirror is one-way and touches only its own files
+The user picks a folder through SAF. The app writes `Quests/<title>.md` per
+quest, with `id:` front matter, and daily snapshots to `Quests/.backups/`,
+keeping the newest 8. Files it didn't write are never modified or deleted.
+Edits made in Obsidian are not read back: the event log is the source of
+truth, and two-way merge of free text is out of scope for v1.
+
+### D-402 · Snapshots are the event log, and import merges
+A snapshot is a versioned header plus every event. Import validates the file
+and ingests the events through the same path as sync. The fold's dedupe by
+event id makes re-importing harmless, and import never wipes. Events more
+than 24h in the future are refused (D-112) and listed in the report.
+
+## P5 — Server
+
+### D-501 · MCP implemented directly, not with the Kotlin SDK
+The spec asked for the official SDK or a documented reason. Reasons:
+- SDK 0.15+ needs Kotlin 2.4. The project is on 2.1 (D-004).
+- In 0.8.4, the last release that builds with 2.1, the Streamable-HTTP
+  endpoint function is `internal`.
+- The public `mcpStatelessStreamableHttp` returned 406 to a spec-conformant
+  request (`Accept: application/json, text/event-stream`) in a probe.
+
+The server only needs the stateless subset, about 150 lines in
+`McpServer.kt`:
+- JSON-RPC 2.0 over `POST /mcp` with `application/json` replies.
+- `initialize`, `ping`, `tools/list`, `tools/call`. Notifications get 202.
+- No sessions and no SSE: `GET` and `DELETE /mcp` return 405, which the
+  spec allows.
+
+Tool input schemas are generated from the same `@Serializable` DTOs as
+`/schema`. Protocol versions 2025-06-18, 2025-03-26 and 2024-11-05 are
+accepted. Revisit when the SDK and the toolchain line up.
+
+### D-502 · Single-user server, multi-user tables
+A self-hosted server belongs to one person: the admin password is the login.
+Every table still has `user_id`, and every query filters by it, so a hosted
+multi-user mode only needs a user table and a login.
+
+### D-503 · OAuth 2.1 details
+- Dynamic client registration is open, as the MCP clients require. A
+  registered client can do nothing until the owner approves it on the
+  consent page with the admin password.
+- Only PKCE S256 is accepted.
+- Codes are single-use. Replaying one revokes everything issued from it. The
+  revocation is committed outside the failing transaction, so it sticks.
+- Refresh tokens rotate. Reusing a rotated refresh token revokes its whole
+  family.
+- Errors are redirected to the client, except when the client or redirect
+  URI itself is invalid (RFC 6749 §4.1.2.1).
+- Only hashes of codes and tokens are stored.
+
+### D-504 · Proposals are written by the server as events
+Write tools validate with `ProposalRules` against the server's own fold, then
+append a `proposal.created` event with the server's device id and actor
+`mcp:<client name>`. Phones receive it through normal sync. The server never
+writes domain events itself.
+
+### D-505 · Limits and the call log
+Defaults, each configurable by environment variable:
+- 60 MCP tool calls per minute per connector.
+- 30 proposals per hour per connector.
+- Login and pairing: 10 attempts per 10 minutes per IP.
+
+Every MCP call is logged with the connector name, tool, outcome and a short
+detail. The log is visible on the admin page. Query strings and bodies are
+never logged.
+
+### D-506 · Origin check on /mcp
+Browser requests to `/mcp` must come from an allowed origin
+(`ALLOWED_ORIGINS`, default claude.ai and chatgpt.com). Requests without an
+`Origin` header, from server-side clients, are allowed. They still need a
+bearer token.

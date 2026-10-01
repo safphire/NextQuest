@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# One-command self-host:   cp .env.example .env   (set ADMIN_PASSWORD, PUBLIC_URL)
+#                          docker compose up -d
+# Put it behind HTTPS (Caddy, Traefik, a tunnel…) before connecting Claude or ChatGPT.
+services:
+  quest:
+    build: .
+    image: dreamweave-quest-server:local
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD (12+ characters) in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      APP_NAME: ${APP_NAME:-NextQuest}
+      TZ: ${TZ:-UTC}
+      MCP_CALLS_PER_MINUTE: ${MCP_CALLS_PER_MINUTE:-60}
+      PROPOSALS_PER_HOUR: ${PROPOSALS_PER_HOUR:-30}
+    volumes:
+      - quest-data:/data
+
+volumes:
+  quest-data:
