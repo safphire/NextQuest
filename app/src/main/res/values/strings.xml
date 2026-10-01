@@ -5,4 +5,6 @@
          Everything else references @string/app_name or stringResource(R.string.app_name). -->
     <string name="app_name" translatable="false">NextQuest</string>
     <string name="share_capture_label">Capture as quest</string>
+    <string name="widget_label">Next steps</string>
+    <string name="widget_description">Your tracked quests\' next steps, with Done and capture.</string>
 </resources>

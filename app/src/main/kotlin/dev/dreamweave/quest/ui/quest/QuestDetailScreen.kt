@@ -242,7 +242,10 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                                     checked = step.alarm,
                                     onCheckedChange = { on ->
                                         if (on && step.dueAt == null) prompt = Prompt.Schedule(step.id, null, true)
-                                        else vm.run { schedule(step.id, step.dueAt, on) }
+                                        else {
+                                            if (on) actions.reminderSet()
+                                            vm.run { schedule(step.id, step.dueAt, on) }
+                                        }
                                     },
                                     colors = SwitchDefaults.colors(checkedTrackColor = c.violet, checkedThumbColor = c.onViolet),
                                     modifier = Modifier.semantics { contentDescription = "Alarm" },
@@ -370,7 +373,11 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
         is Prompt.Schedule -> DueDatePicker(
             initial = p.due, now = now, zone = vm.zone,
             onDismiss = { prompt = null },
-            onPicked = { at -> prompt = null; vm.run { schedule(p.stepId, at, p.alarm) } },
+            onPicked = { at ->
+                prompt = null
+                actions.reminderSet()
+                vm.run { schedule(p.stepId, at, p.alarm) }
+            },
             onClear = { prompt = null; vm.run { schedule(p.stepId, null, false) } },
         )
         Prompt.AddSubquest -> TextPromptDialog(

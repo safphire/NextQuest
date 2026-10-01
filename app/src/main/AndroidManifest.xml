@@ -2,6 +2,19 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Reminders, digest, streak guard (asked only when the first reminder is set). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Per-step alarms at the exact minute; without it reminders fall back to inexact. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Lock-screen alarm UI for steps with "alarm" on; falls back to a heads-up notification. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Re-arm reminders after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Optional sync with your own server. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:name=".QuestApp"
         android:allowBackup="true"
@@ -28,5 +41,50 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".presence.AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="" />
+
+        <activity
+            android:name=".widget.WidgetDoneActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Quest.Translucent"
+            android:windowSoftInputMode="adjustResize" />
+
+        <receiver
+            android:name=".presence.ReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".presence.SystemEventsReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".widget.QuestWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quest_widget_info" />
+        </receiver>
     </application>
 </manifest>

@@ -180,10 +180,12 @@ fun SettingsScreen(
     when (timeDialog) {
         "digest" -> TimeOfDayDialog("Morning digest", settings.digestMinutes, onDismiss = { timeDialog = null }) { m ->
             timeDialog = null
+            actions.reminderSet()
             vm.updateSettings { it.copy(digestMinutes = m) }
         }
         "guard" -> TimeOfDayDialog("Streak guard", settings.streakGuardMinutes, onDismiss = { timeDialog = null }) { m ->
             timeDialog = null
+            actions.reminderSet()
             vm.updateSettings { it.copy(streakGuardMinutes = m) }
         }
     }

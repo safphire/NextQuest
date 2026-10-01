@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest.ui
 
+import android.Manifest
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalContext
+import dev.dreamweave.quest.presence.Notifications
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -103,6 +109,8 @@ class RootActions(
     /** Done on a step: haptic + XP toast, then the "What's next?" sheet. */
     val done: (stepId: String) -> Unit,
     val back: () -> Unit,
+    /** A reminder or alarm was just set: the one moment we ask for notification permission. */
+    val reminderSet: () -> Unit = {},
 )
 
 @Composable
@@ -125,6 +133,12 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
 
     val nav = rememberNavController()
     val view = LocalView.current
+    val context = LocalContext.current
+    val currentSettings by rememberUpdatedState(set)
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        vm.updateSettings { it.copy(notificationPermissionAsked = true) }
+        if (!granted) vm.message("Reminders stay silent until notifications are allowed (Settings → Reminders).")
+    }
     var showCapture by rememberSaveable { mutableStateOf(false) }
     var captureSeed by rememberSaveable { mutableStateOf("") }
     var completingStep by rememberSaveable { mutableStateOf<String?>(null) }
@@ -171,6 +185,11 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
                 completingStep = stepId
             },
             back = { nav.popBackStack() },
+            reminderSet = {
+                if (Build.VERSION.SDK_INT >= 33 && !Notifications.canPost(context) && !currentSettings.notificationPermissionAsked) {
+                    permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            },
         )
     }
 

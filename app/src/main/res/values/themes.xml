@@ -9,4 +9,14 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:colorAccent">@color/violet</item>
     </style>
+
+    <!-- Over the home screen: the widget's "What's next?" sheet. -->
+    <style name="Theme.Quest.Translucent" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 </resources>
