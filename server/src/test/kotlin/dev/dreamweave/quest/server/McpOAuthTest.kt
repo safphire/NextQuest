@@ -82,10 +82,10 @@ class McpOAuthTest {
         assertContains(consent, "Allow ChatGPT?")
         assertContains(consent, "accept, edit or reject")
 
-        // PKCE is mandatory; plain is refused.
-        val plain = http.get("/oauth/authorize?response_type=code&client_id=$clientId&code_challenge=${"a".repeat(43)}&code_challenge_method=plain")
-        assertEquals(HttpStatusCode.Found, plain.status)
-        assertContains(plain.headers[HttpHeaders.Location]!!, "error=invalid_request")
+        // PKCE is mandatory; plain is refused. Until the owner approves the client, its
+        // redirect URI is unverified, so the error is shown on the page (D-507).
+        val plainUrl = "/oauth/authorize?response_type=code&client_id=$clientId&code_challenge=${"a".repeat(43)}&code_challenge_method=plain"
+        assertEquals(HttpStatusCode.BadRequest, http.get(plainUrl).status)
         // Unknown clients see an error page, never a redirect.
         assertEquals(HttpStatusCode.BadRequest, http.get("/oauth/authorize?client_id=nope&redirect_uri=https://x.example").status)
 
@@ -98,13 +98,20 @@ class McpOAuthTest {
                 append("decision", decision); append("password", password)
             }
         }
-        assertContains(http.submitForm("/oauth/authorize", form("deny", "")).headers[HttpHeaders.Location]!!, "error=access_denied")
+        val deniedFirst = http.submitForm("/oauth/authorize", form("deny", ""))
+        assertEquals(HttpStatusCode.OK, deniedFirst.status)
+        assertContains(deniedFirst.bodyAsText(), "Not connected")
         assertEquals(HttpStatusCode.Unauthorized, http.submitForm("/oauth/authorize", form("approve", "wrong")).status)
         val ok = http.submitForm("/oauth/authorize", form("approve", PASSWORD))
         val location = ok.headers[HttpHeaders.Location]!!
         assertTrue(location.startsWith("https://chatgpt.com/connector_platform_oauth_redirect?code="))
         assertContains(location, "state=s1")
         val code = java.net.URLDecoder.decode(Regex("code=([^&]+)").find(location)!!.groupValues[1], "UTF-8")
+        // Approved now: errors and denials go back to the client.
+        val plain = http.get(plainUrl)
+        assertEquals(HttpStatusCode.Found, plain.status)
+        assertContains(plain.headers[HttpHeaders.Location]!!, "error=invalid_request")
+        assertContains(http.submitForm("/oauth/authorize", form("deny", "")).headers[HttpHeaders.Location]!!, "error=access_denied")
 
         suspend fun token(vararg p: Pair<String, String>) =
             http.submitForm("/oauth/token", parameters { p.forEach { (k, v) -> append(k, v) } })
@@ -172,7 +179,8 @@ class McpOAuthTest {
         assertTrue(tool(token, "list_quests", args { put("status", "weird") }).first)
         assertTrue(tool(token, "get_history", args { put("days", 3) }).second.jsonObject["entries"]!!.jsonArray.isNotEmpty())
         assertEquals("1", tool(token, "get_stats").second.jsonObject.str("level"))
-        assertTrue(tool(token, "no_such_tool").first)
+        // Unknown tools are a protocol error (-32602), not a tool result.
+        assertEquals(-32602, rpc(token, "tools/call", buildJsonObject { put("name", "no_such_tool") })["error"]!!.jsonObject.str("code").toInt())
     }
 
     @Test

@@ -14,17 +14,14 @@ import io.ktor.http.URLBuilder
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
-import io.ktor.server.request.receive
-import io.ktor.server.request.receiveParameters
-import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
@@ -66,7 +63,23 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         // Paths only: never log query strings (codes, tokens) or bodies.
         format { call -> "${call.request.local.method.value} ${call.request.path()} -> ${call.response.status()?.value}" }
     }
+    // Clickjacking, sniffing and referrer protection on every response (HttpGuards.kt).
+    install(
+        createApplicationPlugin("SecurityHeaders") {
+            onCall { call -> SECURITY_HEADERS.forEach { (name, value) -> call.response.header(name, value) } }
+        },
+    )
     install(StatusPages) {
+        exception<BodyTooLarge> { call, cause ->
+            if (call.request.path() in HTML_FORMS) {
+                call.respondText(
+                    Web.page(config, "Too large", "<h1>That was too much</h1><div class=\"card\"><p>The form was larger than the server accepts.</p></div>"),
+                    ContentType.Text.Html, HttpStatusCode.PayloadTooLarge,
+                )
+            } else {
+                call.respond(HttpStatusCode.PayloadTooLarge, ApiError("too_large", "Request body larger than ${cause.limit / 1024} KB."))
+            }
+        }
         exception<Throwable> { call, cause ->
             log.error("Unhandled error on ${call.request.path()}", cause)
             call.respond(HttpStatusCode.InternalServerError, ApiError("internal", "Something went wrong on the server."))
@@ -82,10 +95,11 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         get("/.well-known/oauth-authorization-server") { call.respond(s.oauth.authorizationServerMetadata()) }
 
         post("/oauth/register") {
-            if (s.limiter.hit("register:${call.request.origin.remoteHost}", 20, 3_600_000) != null) {
+            if (s.limiter.hit("register:${call.clientAddress(config)}", 20, 3_600_000) != null) {
                 return@post call.respond(HttpStatusCode.TooManyRequests, oauthError("invalid_client_metadata", "too many registrations, try later"))
             }
-            val body = runCatching { ToolJson.parseToJsonElement(call.receiveText()) as JsonObject }.getOrNull()
+            val text = call.receiveTextLimited(BodyLimits.FORM)
+            val body = runCatching { ToolJson.parseToJsonElement(text) as JsonObject }.getOrNull()
                 ?: return@post call.respond(HttpStatusCode.BadRequest, oauthError("invalid_client_metadata", "expected a JSON object"))
             try {
                 call.respond(HttpStatusCode.Created, s.oauth.register(body))
@@ -106,23 +120,27 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         }
 
         post("/oauth/authorize") {
-            val form = call.receiveParameters().toMap()
+            val form = call.receiveFormLimited().toMap()
             val req = try {
                 s.oauth.parseAuthorize(form)
             } catch (e: OAuthError) {
                 return@post authorizeError(call, s, form, e)
             }
             if (form["decision"] != "approve") {
+                // Only a client the owner approved before has a verified redirect URI (D-507).
+                if (!req.client.approved) return@post call.respondText(deniedPage(config, req), ContentType.Text.Html)
                 return@post call.respondRedirect(redirectWith(req.redirectUri, "error" to "access_denied", "state" to req.state))
             }
             val session = s.sessions.get(call.request.cookies[Sessions.COOKIE])
-            val viaSession = session != null && form["csrf"] == session.csrf
-            if (!viaSession) {
-                if (s.limiter.hit("login:${call.request.origin.remoteHost}", 10, 600_000) != null) {
-                    return@post call.respondText(consentPage(config, req, form, null, "Too many attempts. Wait a few minutes."), ContentType.Text.Html, HttpStatusCode.TooManyRequests)
-                }
-                if (!s.sessions.checkPassword(form["password"].orEmpty())) {
-                    return@post call.respondText(consentPage(config, req, form, null, "Wrong password."), ContentType.Text.Html, HttpStatusCode.Unauthorized)
+            if (!csrfOk(session, form["csrf"])) {
+                when (passwordCheck(call, s, form["password"])) {
+                    PasswordCheck.OK -> Unit
+                    PasswordCheck.LIMITED -> return@post call.respondText(
+                        consentPage(config, req, form, null, "Too many attempts. Wait a few minutes."), ContentType.Text.Html, HttpStatusCode.TooManyRequests,
+                    )
+                    PasswordCheck.WRONG -> return@post call.respondText(
+                        consentPage(config, req, form, null, "Wrong password."), ContentType.Text.Html, HttpStatusCode.Unauthorized,
+                    )
                 }
             }
             val code = s.oauth.issueCode(config.userId, req)
@@ -132,7 +150,7 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
 
         post("/oauth/token") {
             call.response.header(HttpHeaders.CacheControl, "no-store")
-            val form = call.receiveParameters().toMap()
+            val form = call.receiveFormLimited().toMap()
             try {
                 call.respond(s.oauth.token(form, basicAuth(call)))
             } catch (e: OAuthError) {
@@ -141,26 +159,26 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         }
 
         post("/oauth/revoke") {
-            call.receiveParameters()["token"]?.let(s.oauth::revoke)
+            call.receiveFormLimited()["token"]?.let(s.oauth::revoke)
             call.respond(HttpStatusCode.OK, buildJsonObject { })
         }
 
         // ---- sync API --------------------------------------------------------------------
         post(SyncApi.PAIR) {
-            if (s.limiter.hit("pair:${call.request.origin.remoteHost}", 10, 600_000) != null) {
+            if (s.limiter.hit("pair:${call.clientAddress(config)}", 10, 600_000) != null) {
                 return@post call.respond(HttpStatusCode.TooManyRequests, ApiError("rate_limited", "Too many attempts. Wait a few minutes."))
             }
-            val req = runCatching { call.receive<PairRequest>() }.getOrNull()
+            val req = call.receiveJsonLimited(PairRequest.serializer(), BodyLimits.FORM)
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError("bad_request", "Expected code, deviceId and deviceName."))
             val res = s.devices.pair(req)
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code", "That pairing code is wrong or expired. Create a new one on the server page."))
-            log.info("Device paired: {}", req.deviceName.take(60))
+            log.info("Device paired: {}", Devices.displayName(req.deviceName))
             call.respond(res)
         }
 
         post(SyncApi.EVENTS) {
             val device = deviceOf(call, s) ?: return@post unauthorizedDevice(call)
-            val req = runCatching { call.receive<PushRequest>() }.getOrNull()
+            val req = call.receiveJsonLimited(PushRequest.serializer(), BodyLimits.EVENTS)
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError("bad_request", "Expected {\"events\": [...]}."))
             if (req.events.size > SyncApi.MAX_PUSH) {
                 return@post call.respond(HttpStatusCode.PayloadTooLarge, ApiError("too_many", "Push at most ${SyncApi.MAX_PUSH} events at once."))
@@ -195,7 +213,7 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
             if (version != null && version !in McpServer.SUPPORTED_VERSIONS) {
                 return@post call.respond(HttpStatusCode.BadRequest, ApiError("unsupported_protocol_version", "Supported: ${McpServer.SUPPORTED_VERSIONS}"))
             }
-            val reply = s.mcp.handle(grant, call.receiveText())
+            val reply = s.mcp.handle(grant, call.receiveTextLimited(BodyLimits.MCP))
             if (reply.body == null) {
                 call.respond(HttpStatusCode.Accepted, "")
             } else {
@@ -219,25 +237,21 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         }
 
         post("/login") {
-            val form = call.receiveParameters()
-            if (s.limiter.hit("login:${call.request.origin.remoteHost}", 10, 600_000) != null) {
-                return@post call.respondText(Web.login(config, "Too many attempts. Wait a few minutes."), ContentType.Text.Html, HttpStatusCode.TooManyRequests)
+            val form = call.receiveFormLimited()
+            when (passwordCheck(call, s, form["password"])) {
+                PasswordCheck.OK -> Unit
+                PasswordCheck.LIMITED -> return@post call.respondText(Web.login(config, "Too many attempts. Wait a few minutes."), ContentType.Text.Html, HttpStatusCode.TooManyRequests)
+                PasswordCheck.WRONG -> return@post call.respondText(Web.login(config, "Wrong password."), ContentType.Text.Html, HttpStatusCode.Unauthorized)
             }
             val token = s.sessions.login(form["password"].orEmpty())
                 ?: return@post call.respondText(Web.login(config, "Wrong password."), ContentType.Text.Html, HttpStatusCode.Unauthorized)
-            call.response.cookies.append(
-                Cookie(
-                    Sessions.COOKIE, token, maxAge = (Sessions.TTL_MS / 1000).toInt(), path = "/",
-                    secure = config.secureCookies, httpOnly = true, extensions = mapOf("SameSite" to "Lax"),
-                ),
-            )
-            val next = form["next"]?.takeIf { it.startsWith("/") && !it.startsWith("//") } ?: "/"
-            call.respondRedirect(next)
+            call.response.cookies.append(sessionCookie(config, token, (Sessions.TTL_MS / 1000).toInt()))
+            call.respondRedirect(localPath(form["next"]) ?: "/")
         }
 
         post("/logout") {
             s.sessions.logout(call.request.cookies[Sessions.COOKIE])
-            call.response.cookies.append(Cookie(Sessions.COOKIE, "", maxAge = 0, path = "/"))
+            call.response.cookies.append(sessionCookie(config, "", 0))
             call.respondRedirect("/")
         }
 
@@ -248,16 +262,16 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         }
 
         post("/devices/revoke") {
-            val form = call.receiveParameters()
+            val form = call.receiveFormLimited()
             val session = s.sessions.get(call.request.cookies[Sessions.COOKIE])
-            if (session != null && form["csrf"] == session.csrf) form["id"]?.let { s.devices.revoke(session.userId, it) }
+            if (session != null && csrfOk(session, form["csrf"])) form["id"]?.let { s.devices.revoke(session.userId, it) }
             call.respondRedirect("/")
         }
 
         post("/connections/revoke") {
-            val form = call.receiveParameters()
+            val form = call.receiveFormLimited()
             val session = s.sessions.get(call.request.cookies[Sessions.COOKIE])
-            if (session != null && form["csrf"] == session.csrf) form["id"]?.let { s.oauth.disconnect(session.userId, it) }
+            if (session != null && csrfOk(session, form["csrf"])) form["id"]?.let { s.oauth.disconnect(session.userId, it) }
             call.respondRedirect("/")
         }
     }
@@ -265,6 +279,45 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
 }
 
 private fun Parameters.toMap(): Map<String, String?> = names().associateWith { this[it] }
+
+/** Browser form posts: a 413 there is shown as a page, not JSON. */
+private val HTML_FORMS = setOf("/oauth/authorize", "/login", "/logout", "/pair", "/devices/revoke", "/connections/revoke")
+
+/** Wrong admin passwords across all addresses per hour: a botnet can't out-guess the per-IP limit. */
+const val FAILED_PASSWORDS_PER_HOUR = 100
+
+private enum class PasswordCheck { OK, WRONG, LIMITED }
+
+/**
+ * The admin password check behind every login (sign-in page and connector consent):
+ * 10 attempts per 10 minutes per client address, and at most [FAILED_PASSWORDS_PER_HOUR]
+ * failures per hour in total. When the global budget is spent nobody can sign in for a
+ * while, but a signed-in owner keeps their session (and approves connectors with it).
+ */
+private fun passwordCheck(call: ApplicationCall, s: Services, password: String?): PasswordCheck {
+    if (s.limiter.hit("login:${call.clientAddress(s.config)}", 10, 600_000) != null) return PasswordCheck.LIMITED
+    if (s.limiter.blocked("login-failures", FAILED_PASSWORDS_PER_HOUR, 3_600_000) != null) return PasswordCheck.LIMITED
+    if (s.sessions.checkPassword(password.orEmpty())) return PasswordCheck.OK
+    s.limiter.hit("login-failures", FAILED_PASSWORDS_PER_HOUR, 3_600_000)
+    return PasswordCheck.WRONG
+}
+
+private fun csrfOk(session: Sessions.Session?, submitted: String?): Boolean =
+    session != null && submitted != null && Secrets.constantTimeEquals(submitted, session.csrf)
+
+/** Same attributes on set and clear, so the browser replaces (not shadows) the cookie. */
+private fun sessionCookie(config: Config, value: String, maxAge: Int) = Cookie(
+    Sessions.COOKIE, value, maxAge = maxAge, path = "/",
+    secure = config.secureCookies, httpOnly = true, extensions = mapOf("SameSite" to "Lax"),
+)
+
+/**
+ * A same-site path to return to after sign-in, or null. `//host` and `/\host` are
+ * protocol-relative to browsers, and control characters or spaces can be stripped into
+ * one, so only printable ASCII without backslashes is accepted.
+ */
+fun localPath(next: String?): String? =
+    next?.takeIf { n -> n.startsWith("/") && !n.startsWith("//") && n.all { it in '!'..'~' && it != '\\' } }
 
 private fun oauthError(error: String, description: String): JsonObject = buildJsonObject {
     put("error", error)
@@ -274,11 +327,15 @@ private fun oauthError(error: String, description: String): JsonObject = buildJs
 private fun redirectWith(uri: String, vararg params: Pair<String, String?>): String =
     URLBuilder(uri).apply { params.forEach { (k, v) -> if (v != null) parameters.append(k, v) } }.buildString()
 
-/** Client and redirect problems are shown on the page (never redirect to an unverified URI). */
+/**
+ * Client and redirect problems are shown on the page (never redirect to an unverified URI).
+ * Other errors are redirected to the client only once the owner has approved it: before
+ * that, its redirect URI is just whatever someone registered (an open redirect, D-507).
+ */
 private suspend fun authorizeError(call: ApplicationCall, s: Services, p: Map<String, String?>, e: OAuthError) {
     val client = s.oauth.client(p["client_id"])
     val redirect = p["redirect_uri"] ?: client?.redirectUris?.singleOrNull()
-    if (client != null && redirect != null && redirect in client.redirectUris && e.error !in setOf("invalid_client", OAuth.INVALID_REDIRECT)) {
+    if (client != null && client.approved && redirect != null && redirect in client.redirectUris && e.error !in setOf("invalid_client", OAuth.INVALID_REDIRECT)) {
         call.respondRedirect(redirectWith(redirect, "error" to e.error, "error_description" to e.description, "state" to p["state"]))
     } else {
         call.respondText(
@@ -305,9 +362,9 @@ private suspend fun unauthorizedDevice(call: ApplicationCall) =
     call.respond(HttpStatusCode.Unauthorized, ApiError("unauthorized", "This device isn't paired (or was removed). Pair it again from the server page."))
 
 private suspend fun sessionWithCsrf(call: ApplicationCall, s: Services): Sessions.Session? {
-    val form = call.receiveParameters()
+    val form = call.receiveFormLimited()
     val session = s.sessions.get(call.request.cookies[Sessions.COOKIE]) ?: return null
-    return session.takeIf { form["csrf"] == it.csrf }
+    return session.takeIf { csrfOk(it, form["csrf"]) }
 }
 
 private fun originAllowed(origin: String, config: Config): Boolean {
@@ -325,18 +382,26 @@ private fun consentPage(config: Config, req: AuthRequest, p: Map<String, String?
     } else {
         "<label for=\"pw\">Admin password</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" autofocus>"
     }
+    // The redirect host is the one fact about a client nobody can fake: it is where the
+    // code goes. Shown before the name, prominently (D-507).
+    val host = Web.esc(URI(req.redirectUri).host)
     return Web.page(
         config, "Connect ${req.client.name}",
         """<div class="meta">Connect an AI assistant</div><h1>Allow ${Web.esc(req.client.name)}?</h1>
+<div class="card"><p>Sign-in goes back to <strong><code>$host</code></strong>. Approve only if that is the assistant you are adding.</p></div>
 <div class="card"><p><strong>${Web.esc(req.client.name)}</strong> wants to read your quests, steps and history, and to <strong>suggest</strong> changes.</p>
-<p class="muted">It can never change anything itself: every suggestion arrives in the app as a proposal that you accept, edit or reject.</p>
-<p class="muted">After approving you return to <code>${Web.esc(URI(req.redirectUri).host)}</code>.</p></div>
+<p class="muted">It can never change anything itself: every suggestion arrives in the app as a proposal that you accept, edit or reject.</p></div>
 <form method="post" action="/oauth/authorize" class="card">$hidden$auth
 ${error?.let { "<p class=\"err\">${Web.esc(it)}</p>" } ?: ""}
 <div class="row"><button class="primary" type="submit" name="decision" value="approve">Approve</button>
 <button type="submit" name="decision" value="deny" formnovalidate>Deny</button></div></form>""",
     )
 }
+
+private fun deniedPage(config: Config, req: AuthRequest): String = Web.page(
+    config, "Not connected",
+    "<h1>Not connected</h1><div class=\"card\"><p>${Web.esc(req.client.name)} was not given access. You can close this window.</p></div>",
+)
 
 private fun dashboard(s: Services, session: Sessions.Session): String {
     val c = s.config
@@ -354,7 +419,7 @@ private fun dashboard(s: Services, session: Sessions.Session): String {
             "<input type=\"hidden\" name=\"id\" value=\"${Web.esc(k.clientId)}\"><button type=\"submit\">Disconnect</button></form></td></tr>"
     }
     val callRows = calls.joinToString("") { k ->
-        "<tr><td class=\"mono\">${Web.time(k.at, c)}</td><td>${Web.esc(k.client)}</td><td class=\"mono\">${Web.esc(k.tool ?: "-")}</td>" +
+        "<tr><td class=\"mono\">${Web.time(k.at, c)}</td><td>${Web.esc(k.client)}</td><td class=\"mono\">${Web.esc(k.tool ?: k.method)}</td>" +
             "<td class=\"${if (k.ok) "ok" else "err"}\">${if (k.ok) "ok" else Web.esc(k.detail ?: "error")}</td></tr>"
     }
     return Web.page(

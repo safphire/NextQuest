@@ -83,14 +83,14 @@ class McpTools(private val store: EventStore, private val config: Config, privat
                 propose(grant, ProposalOp.SET_NEXT_STEP, SetNextStepPayload(i.questId, i.text, i.dueAt?.let(::parseTime)), i.reason)
             }
             McpToolSpecs.PROPOSE_COMPLETE_STEP.name -> decode(ProposeCompleteStepInput.serializer(), args).let { i ->
-                val step = resolveStep(grant, i.questId, i.stepId) ?: return ToolResult.Error("quest ${i.questId} has no current step to complete")
+                val step = resolveStep(grant, i.questId, i.stepId, "complete")
                 propose(grant, ProposalOp.COMPLETE_STEP, CompleteStepPayload(step.questId, step.id), i.reason)
             }
             McpToolSpecs.PROPOSE_ADD_SUBQUEST.name -> decode(ProposeAddSubquestInput.serializer(), args).let { i ->
                 propose(grant, ProposalOp.ADD_SUBQUEST, AddSubquestPayload(i.parentId, i.title, i.nextStep), i.reason)
             }
             McpToolSpecs.PROPOSE_SCHEDULE_STEP.name -> decode(ProposeScheduleStepInput.serializer(), args).let { i ->
-                val step = resolveStep(grant, i.questId, i.stepId) ?: return ToolResult.Error("quest ${i.questId} has no current step to schedule")
+                val step = resolveStep(grant, i.questId, i.stepId, "schedule")
                 propose(grant, ProposalOp.SCHEDULE_STEP, ScheduleStepPayload(step.questId, step.id, i.dueAt?.let(::parseTime), i.alarm), i.reason)
             }
             McpToolSpecs.PROPOSE_PARK_QUEST.name -> decode(ProposeParkQuestInput.serializer(), args).let { i ->
@@ -219,24 +219,28 @@ class McpTools(private val store: EventStore, private val config: Config, privat
 
     // ---- write tools: proposals only ----------------------------------------------------
 
-    private fun resolveStep(g: Grant, questId: String, stepId: String?): Step? {
+    /** The given step (which must belong to [questId]), or the quest's current one. */
+    private fun resolveStep(g: Grant, questId: String, stepId: String?, verb: String): Step {
         val state = store.state(g.userId)
-        if (stepId != null) return state.steps[stepId]
-        return state.openStep(questId) ?: state.effectiveStep(questId)
+        if (stepId != null) {
+            val step = state.steps[stepId] ?: throw BadInput("step $stepId does not exist")
+            if (step.questId != questId) throw BadInput("step $stepId belongs to quest ${step.questId}, not $questId; pass quest_id=${step.questId}")
+            return step
+        }
+        return state.openStep(questId) ?: state.effectiveStep(questId) ?: throw BadInput("quest $questId has no current step to $verb")
     }
 
     private fun propose(g: Grant, op: ProposalOp, payload: Any, reason: String): ToolResult {
         if (reason.isBlank()) return ToolResult.Error("reason is required: tell the user why you suggest this")
-        val state = store.state(g.userId)
         val json = ProposalOps.encode(payload)
-        val problems = ProposalRules.validate(state, op.wire, json)
-        if (problems.isNotEmpty()) return ToolResult.Error("Not proposed: " + problems.joinToString("; "))
         val id = Ids.newId(clock())
         val created = Events.proposalCreated(
             ProposalCreated(id, ProposalSource.fromClientName(g.clientName), g.clientName, op.wire, json, reason.trim().take(1_000)),
         )
         return try {
-            store.appendServerEvents(g.userId, listOf(created), Actors.mcp(g.clientName))
+            // Validated under the store's lock against the state it is appended to, so two
+            // concurrent proposals can't both pass against the same stale snapshot.
+            store.appendServerEvents(g.userId, listOf(created), Actors.mcp(g.clientName)) { state -> ProposalRules.validate(state, op.wire, json) }
             ok(
                 ProposalCreatedDto.serializer(),
                 ProposalCreatedDto(id, "pending", "Proposal saved. Nothing has changed yet: the user will accept, edit or reject it in the app."),

@@ -37,18 +37,51 @@ class Sessions(private val db: Db, private val config: Config, private val clock
     }
 }
 
-/** Sliding-window limiter, per key, in memory. */
+/**
+ * Sliding-window limiter, per key, in memory. Keys whose window has passed are swept once
+ * a minute, and whenever the map has doubled since the last sweep, so memory stays bounded
+ * by the keys active within their windows (an attacker rotating addresses can't grow it
+ * forever).
+ */
 class RateLimiter(private val clock: () -> Long) {
-    private val hits = HashMap<String, ArrayDeque<Long>>()
+    private class Window(val ms: Long) {
+        val hits = ArrayDeque<Long>()
+    }
+
+    private val windows = HashMap<String, Window>()
+    private var sweepAt = SWEEP_MIN
+    private var lastSweep = 0L
 
     /** Records a hit and returns null if allowed, or the seconds to wait. */
     @Synchronized
     fun hit(key: String, limit: Int, windowMs: Long): Long? {
-        val now = clock()
-        val q = hits.getOrPut(key) { ArrayDeque() }
-        while (q.isNotEmpty() && q.first() <= now - windowMs) q.removeFirst()
-        if (q.size >= limit) return ((q.first() + windowMs - now) / 1000).coerceAtLeast(1)
-        q.addLast(now)
+        blocked(key, limit, windowMs)?.let { return it }
+        windows.getValue(key).hits.addLast(clock())
         return null
+    }
+
+    /** Like [hit] without recording one: for budgets spent only on failure. */
+    @Synchronized
+    fun blocked(key: String, limit: Int, windowMs: Long): Long? {
+        val now = clock()
+        if (windows.size >= sweepAt || now - lastSweep >= SWEEP_INTERVAL_MS) sweep(now)
+        val w = windows.getOrPut(key) { Window(windowMs) }
+        while (w.hits.isNotEmpty() && w.hits.first() <= now - windowMs) w.hits.removeFirst()
+        if (w.hits.size >= limit) return ((w.hits.first() + windowMs - now) / 1000).coerceAtLeast(1)
+        return null
+    }
+
+    @Synchronized
+    fun size(): Int = windows.size
+
+    private fun sweep(now: Long) {
+        windows.values.removeAll { w -> w.hits.lastOrNull()?.let { it <= now - w.ms } ?: true }
+        sweepAt = maxOf(SWEEP_MIN, windows.size * 2)
+        lastSweep = now
+    }
+
+    companion object {
+        const val SWEEP_MIN = 1_024
+        const val SWEEP_INTERVAL_MS = 60_000L
     }
 }

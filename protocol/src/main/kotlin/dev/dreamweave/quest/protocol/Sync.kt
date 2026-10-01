@@ -28,7 +28,11 @@ data class PushResponse(
     val accepted: Int,
     val duplicates: Int,
     val rejected: List<RejectedEvent> = emptyList(),
-    /** The server's latest cursor after this push. */
+    /**
+     * The server's latest cursor after this push. Clients use it only to notice a reset
+     * server (a cursor lower than the one they have pulled to); it is never a pull cursor,
+     * since events that arrived before it may not have been pulled yet.
+     */
     val cursor: Long,
 )
 

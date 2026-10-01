@@ -116,6 +116,13 @@ class Db(file: File) : AutoCloseable {
                 client_name TEXT NOT NULL, method TEXT NOT NULL, tool TEXT, ok INTEGER NOT NULL, detail TEXT);
             CREATE INDEX mcp_calls_user_at ON mcp_calls (user_id, at)
             """.trimIndent(),
+            // 2: clients the owner approved (they count toward the cap; the rest expire),
+            // and the audience (RFC 8707 resource) each token was issued for.
+            """
+            ALTER TABLE oauth_clients ADD COLUMN approved_at INTEGER;
+            UPDATE oauth_clients SET approved_at = created_at WHERE client_id IN (SELECT client_id FROM oauth_codes);
+            ALTER TABLE oauth_tokens ADD COLUMN resource TEXT
+            """.trimIndent(),
         )
     }
 }

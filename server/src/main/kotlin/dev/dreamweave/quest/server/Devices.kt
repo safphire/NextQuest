@@ -28,7 +28,7 @@ class Devices(private val db: Db, private val config: Config, private val clock:
                 ?: return@tx null
             update("UPDATE pairing_codes SET used_at = ? WHERE code_hash = ?", now, hash)
             val token = Secrets.token()
-            val name = req.deviceName.trim().take(60).ifEmpty { "Phone" }
+            val name = displayName(req.deviceName)
             update("DELETE FROM devices WHERE user_id = ? AND device_id = ?", userId, req.deviceId)
             update(
                 "INSERT INTO devices (user_id, device_id, name, token_hash, created_at) VALUES (?,?,?,?,?)",
@@ -57,5 +57,8 @@ class Devices(private val db: Db, private val config: Config, private val clock:
 
     companion object {
         const val CODE_TTL_MS = 10 * 60 * 1000L
+
+        /** The device's self-chosen name, safe to store, show and log (no control characters). */
+        fun displayName(raw: String): String = raw.filter { !it.isISOControl() }.trim().take(60).ifEmpty { "Phone" }
     }
 }

@@ -24,10 +24,17 @@ data class Config(
     val allowedOrigins: Set<String> = setOf("https://claude.ai", "https://chatgpt.com"),
     val accessTokenTtlMs: Long = 60 * 60 * 1000L,
     val refreshTokenTtlMs: Long = 30L * 24 * 60 * 60 * 1000,
+    /**
+     * Reverse proxies in front of the server whose `X-Forwarded-For` is trusted (0 = none:
+     * rate limits key on the socket peer). Set it to the number of proxy hops, e.g. 1 for
+     * Caddy on the same host; with more than the real number, clients can pick their key.
+     */
+    val trustProxy: Int = 0,
 ) {
     init {
         require(adminPassword.length >= 12) { "ADMIN_PASSWORD must be at least 12 characters" }
         require(publicUrl.startsWith("https://") || publicUrl.startsWith("http://")) { "PUBLIC_URL must be an http(s) URL" }
+        require(trustProxy in 0..10) { "TRUST_PROXY must be a number of proxy hops (0-10)" }
     }
 
     val secureCookies: Boolean get() = publicUrl.startsWith("https://")
@@ -48,6 +55,9 @@ data class Config(
                 proposalsPerHour = env["PROPOSALS_PER_HOUR"]?.toIntOrNull() ?: 30,
                 allowedOrigins = env["ALLOWED_ORIGINS"]?.split(',')?.map { it.trim().trimEnd('/') }?.filter { it.isNotEmpty() }?.toSet()
                     ?: setOf("https://claude.ai", "https://chatgpt.com"),
+                trustProxy = env["TRUST_PROXY"]?.trim()?.takeIf { it.isNotEmpty() }?.let { v ->
+                    v.toIntOrNull() ?: error("TRUST_PROXY must be a number of proxy hops (0 = no proxy), got '$v'")
+                } ?: 0,
             )
         }
     }

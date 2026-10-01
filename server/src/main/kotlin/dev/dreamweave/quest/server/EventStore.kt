@@ -47,17 +47,22 @@ class EventStore(private val db: Db, private val config: Config, private val clo
 
     /**
      * Stores events pushed by a device. Devices may only push `user` events (AI proposals
-     * are written by the server itself), only under their own device id (so no device can
-     * occupy another's sequence numbers), and never events dated more than a day ahead.
+     * are written by the server itself) and never events dated more than a day ahead. They
+     * may push events of any device id except the server's own and another active (paired,
+     * not revoked) device's, so no live device can occupy another's sequence numbers, while
+     * a snapshot imported from a dead or removed phone still reaches the server.
      */
     @Synchronized
     fun push(userId: String, deviceId: String, events: List<Event>): PushResponse {
         val now = clock()
         val rejected = mutableListOf<RejectedEvent>()
+        val serverDevice = db.one("SELECT value FROM meta WHERE user_id = ? AND key = 'server_device_id'", userId) { it.getString(1) }
+        val otherActive = db.query("SELECT device_id FROM devices WHERE user_id = ? AND revoked_at IS NULL AND device_id <> ?", userId, deviceId) { it.getString(1) }.toSet()
         val valid = events.filter { e ->
             val reason = Envelope.problem(e)
                 ?: if (!Actors.isUser(e.actor)) "devices can only push user events" else null
-                    ?: if (e.deviceId != deviceId) "devices can only push their own events" else null
+                    ?: if (e.deviceId == serverDevice) "only the server writes events under its device id" else null
+                    ?: if (e.deviceId in otherActive) "another paired device's events: only that device can push its own events" else null
                     ?: if (Envelope.tooFarAhead(e, now)) "dated more than a day in the future (check the device clock)" else null
             if (reason != null) rejected += RejectedEvent(e.id, reason)
             reason == null
@@ -101,9 +106,19 @@ class EventStore(private val db: Db, private val config: Config, private val clo
     /**
      * Writes events created by the server (proposals from AI clients). They are stamped
      * after everything already in the log, and validated by the fold before storing.
+     * [validate] runs first, under the same lock, against the state they are appended to
+     * (so check-then-append is atomic); any problems it returns refuse the append with an
+     * [IllegalArgumentException], as a skipped event does.
      */
     @Synchronized
-    fun appendServerEvents(userId: String, pending: List<PendingEvent>, actor: String): List<Event> {
+    fun appendServerEvents(
+        userId: String,
+        pending: List<PendingEvent>,
+        actor: String,
+        validate: (QuestState) -> List<String> = { emptyList() },
+    ): List<Event> {
+        val problems = validate(folder(userId).snapshot())
+        if (problems.isNotEmpty()) throw IllegalArgumentException(problems.joinToString("; "))
         val device = serverDevice(userId)
         val lastSeq = db.one("SELECT MAX(seq) FROM events WHERE user_id = ? AND device_id = ?", userId, device) { it.getLong(1) } ?: 0
         val lastTs = db.one("SELECT MAX(ts) FROM events WHERE user_id = ?", userId) { it.getLong(1) } ?: 0
