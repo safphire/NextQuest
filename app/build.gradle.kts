@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import java.time.Duration
+
 plugins {
     id("com.android.application")
     alias(libs.plugins.kotlin.android)
@@ -129,7 +131,7 @@ dependencies {
 tasks.withType<Test>().configureEach {
     // A hung test (Robolectric main-looper deadlock, a wait that never ends) must fail the
     // build within minutes, and the log must show which test was running.
-    timeout.set(java.time.Duration.ofMinutes(15))
+    timeout.set(Duration.ofMinutes(15))
     testLogging {
         events("started", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
