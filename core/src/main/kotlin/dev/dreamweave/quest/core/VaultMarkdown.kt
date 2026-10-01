@@ -38,27 +38,114 @@ import kotlinx.datetime.toLocalDateTime
 object VaultMarkdown {
     data class Note(val questId: String, val fileName: String, val content: String)
 
-    private val unsafe = Regex("""[\\/:*?"<>|#^\[\]\n\r\t]""")
+    /**
+     * Characters that are unsafe in a file name on some platform, or that break a wikilink:
+     * path and wildcard characters, `#^[]|`, control characters, Unicode line separators
+     * and unpaired surrogates (Java regex matches a valid pair as one code point).
+     */
+    private val unsafe = Regex("""[\\/:*?"<>|#^\[\]\u0000-\u001F\u007F\u2028\u2029\uD800-\uDFFF]""")
+    private val spaces = Regex("\\s+")
+
+    /** Windows device names, also reserved with any extension (`con.txt`). */
+    private val reserved = Regex("^(con|prn|aux|nul|com[0-9\u00B9\u00B2\u00B3]|lpt[0-9\u00B9\u00B2\u00B3])$", RegexOption.IGNORE_CASE)
+
+    const val MAX_NAME_CHARS = 80
+
+    /** UTF-8 budget for a name, leaving room for a full-id suffix under the usual 255-byte limit. */
+    const val MAX_NAME_BYTES = 180
 
     /** A file-system and wikilink safe title. */
-    fun sanitize(title: String): String =
-        title.replace(unsafe, " ").replace(Regex("\\s+"), " ").trim().trimEnd('.').take(80).ifEmpty { "Untitled" }
+    fun sanitize(title: String): String {
+        val cleaned = title.replace(unsafe, " ").replace(spaces, " ").trim().trimStart('.', ' ')
+        val name = clip(cleaned).trimEnd(' ', '.').ifEmpty { "Untitled" }
+        val dot = name.indexOf('.')
+        val base = if (dot < 0) name else name.substring(0, dot)
+        if (!reserved.matches(base.trimEnd())) return name
+        return if (dot < 0) name + "_" else base + "_" + name.substring(dot)
+    }
 
-    /** Note names for every quest; collisions get a short id suffix. Stable for a given state. */
-    fun names(state: QuestState): Map<String, String> {
+    /** At most [MAX_NAME_CHARS] UTF-16 units and [MAX_NAME_BYTES] UTF-8 bytes, cut between code points. */
+    private fun clip(s: String): String {
+        var i = 0
+        var bytes = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            val units = Character.charCount(cp)
+            val size = when {
+                cp < 0x80 -> 1
+                cp < 0x800 -> 2
+                cp < 0x10000 -> 3
+                else -> 4
+            }
+            if (i + units > MAX_NAME_CHARS || bytes + size > MAX_NAME_BYTES) break
+            i += units
+            bytes += size
+        }
+        return s.substring(0, i)
+    }
+
+    /**
+     * Note names (without `.md`) for every quest. Collisions get a short id suffix, and so
+     * does a quest whose name is [occupied] by a file that isn't its own note. Stable for a
+     * given state and folder.
+     *
+     * [occupied] maps a lowercased note name to the quest id found in that file's front
+     * matter, or null when the file isn't one of this app's notes. A file holding the
+     * quest's own id doesn't block the name.
+     */
+    fun names(state: QuestState, occupied: Map<String, String?> = emptyMap()): Map<String, String> {
         val byName = state.quests.values.sortedBy { it.id }.groupBy { sanitize(it.title).lowercase() }
         val out = HashMap<String, String>()
-        for ((_, group) in byName) {
-            group.forEachIndexed { i, q ->
-                out[q.id] = if (i == 0) sanitize(q.title) else "${sanitize(q.title)} (${q.id.takeLast(6)})"
+        val used = HashSet<String>()
+        val rest = mutableListOf<Quest>()
+        // Plain names first, so a suffixed name can never take one of them.
+        for ((key, group) in byName) {
+            val claimant = if (key in occupied) group.firstOrNull { it.id == occupied[key] } else group.first()
+            if (claimant != null) {
+                out[claimant.id] = sanitize(claimant.title)
+                used += key
             }
+            rest += group.filter { it.id != claimant?.id }
+        }
+        fun free(name: String, id: String): Boolean {
+            val key = name.lowercase()
+            return key !in used && (key !in occupied || occupied[key] == id)
+        }
+        for (q in rest.sortedBy { it.id }) {
+            val base = sanitize(q.title)
+            val short = "$base (${q.id.takeLast(6)})"
+            val name = if (free(short, q.id)) short else "$base (${q.id})"
+            out[q.id] = name
+            used += name.lowercase()
         }
         return out
     }
 
-    fun render(state: QuestState, tz: TimeZone): List<Note> {
-        val names = names(state)
+    fun render(state: QuestState, tz: TimeZone, occupied: Map<String, String?> = emptyMap()): List<Note> {
+        val names = names(state, occupied)
         return state.quests.values.sortedBy { it.id }.map { q -> Note(q.id, names.getValue(q.id) + ".md", note(state, q, names, tz)) }
+    }
+
+    private val lineBreaks = Regex("[\r\n\u000B\u000C\u0085\u2028\u2029]+")
+    private val doubleColon = Regex(":(?=:)")
+    private val doublePercent = Regex("%(?=%)")
+    private val orderedMarker = Regex("^(\\d{1,9})([.)])")
+    private const val BLOCK_MARKERS = "#>-+*|~<[="
+
+    /**
+     * User text (titles, steps, why, log lines) made inert for one line of the body: line
+     * breaks collapse to spaces, and nothing in it can start a heading, quote, list, table,
+     * code span or fence, an Obsidian comment (`%%`) or a Dataview inline field (`key:: value`).
+     * Backslash escapes render as the plain character in Markdown.
+     */
+    fun inline(text: String): String {
+        var t = text.replace(lineBreaks, " ").trim()
+        t = t.replace("`", "\\`")
+        t = t.replace(doubleColon) { ":\\" }
+        t = t.replace(doublePercent) { "%\\" }
+        t = orderedMarker.replace(t) { it.groupValues[1] + "\\" + it.groupValues[2] }
+        if (t.isNotEmpty() && t[0] in BLOCK_MARKERS) t = "\\" + t
+        return t
     }
 
     private fun date(ms: Long, tz: TimeZone) = Instant.fromEpochMilliseconds(ms).toLocalDateTime(tz).date.toString()
@@ -81,15 +168,15 @@ object VaultMarkdown {
         appendLine("tags: [quest]")
         appendLine("---")
         appendLine()
-        appendLine("# ${q.title}")
+        appendLine("# ${inline(q.title)}")
         appendLine()
         q.why?.let {
-            appendLine("> $it")
+            appendLine("> ${inline(it)}")
             appendLine()
         }
         val step = if (q.isRoot) state.effectiveStep(q.id) else state.openStep(q.id)
         if (q.status.isOpen) {
-            appendLine("next-step:: ${step?.text ?: "(none yet)"}")
+            appendLine("next-step:: ${step?.text?.let(::inline) ?: "(none yet)"}")
             step?.dueAt?.let { appendLine("due:: ${dateTime(it, tz)}") }
             if (step != null && q.isRoot && step.questId != q.id) names[step.questId]?.let { appendLine("next-step-from:: [[$it]]") }
             appendLine()
@@ -108,7 +195,7 @@ object VaultMarkdown {
         if (log.isNotEmpty()) {
             appendLine("## Log")
             for (h in log) {
-                appendLine("- ${dateTime(h.ts, tz)} · ${h.text}${if (h.xp > 0) " (+${h.xp} XP)" else ""}")
+                appendLine("- ${dateTime(h.ts, tz)} · ${inline(h.text)}${if (h.xp > 0) " (+${h.xp} XP)" else ""}")
             }
         }
     }.trimEnd() + "\n"

@@ -39,4 +39,39 @@ class SnapshotTest {
         assertEquals(1, read.snapshot.events.size)
         assertContains(read.rejected.single(), "not a UUIDv7")
     }
+
+    private fun invalid(json: String): String {
+        val read = SnapshotCodec.decode(json)
+        assertIs<SnapshotRead.Invalid>(read, "expected $json to be refused")
+        return read.reason
+    }
+
+    @Test
+    fun neverThrows_onOddlyTypedHeaderFieldsOrGarbage() {
+        val f = Snapshot.FORMAT
+        val header = """"exportedAt":1,"deviceId":"$device","events":[]"""
+        assertContains(invalid("""{"format":{"a":1}}"""), "isn't a snapshot")
+        assertContains(invalid("""{"format":["$f"]}"""), "isn't a snapshot")
+        assertContains(invalid("""{"format":null}"""), "isn't a snapshot")
+        assertContains(invalid("""["$f"]"""), "isn't a snapshot")
+        assertContains(invalid(""""$f""""), "isn't a snapshot")
+        assertContains(invalid("""{"format":"$f","schemaVersion":[1]}"""), "no schema version")
+        assertContains(invalid("""{"format":"$f","schemaVersion":{"v":1}}"""), "no schema version")
+        assertContains(invalid("""{"format":"$f","schemaVersion":"1"}"""), "no schema version")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1.5}"""), "no schema version")
+        assertContains(invalid("""{"format":"$f","schemaVersion":0,$header}"""), "invalid schema version")
+        assertContains(invalid("""{"format":"$f","schemaVersion":-3,$header}"""), "invalid schema version")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,"exportedAt":{},"deviceId":"$device","events":[]}"""), "export time")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,"exportedAt":0,"deviceId":"$device","events":[]}"""), "export time")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,"exportedAt":1,"deviceId":"nope","events":[]}"""), "device id")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,"exportedAt":1,"deviceId":[1],"events":[]}"""), "device id")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,$header,"events":{"a":1}}""".replace(""""events":[],""", "")), "damaged")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,"exportedAt":1,"deviceId":"$device","events":[1,"x",null]}"""), "damaged")
+        assertContains(invalid("""{"format":"$f","schemaVersion":1,"exportedAt":1,"deviceId":"$device","events":[{"id":{"x":1}}]}"""), "damaged")
+        for (garbage in listOf("", " ", "{", "}", "null", "42", "\u0000", "{\"format\":", "[".repeat(5000), "{\"a\":".repeat(5000))) {
+            assertIs<SnapshotRead.Invalid>(SnapshotCodec.decode(garbage))
+        }
+        // A well-formed empty snapshot is fine.
+        assertIs<SnapshotRead.Ok>(SnapshotCodec.decode("""{"format":"$f","schemaVersion":1,$header}"""))
+    }
 }
