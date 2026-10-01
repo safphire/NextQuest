@@ -304,3 +304,4 @@ DEVICE_TEST covers the spec's acceptance items.
 | Capture sheet stayed on screen after a quick save (API 34 emulator, core-loop test) | FIXED: capture and What's next are a plain bottom dialog (D-201); the test asserts both close |
 | A fired step reminder was taken down by a stale snapshot | FIXED: stale cleanup judges against the latest state (e7d2be3) |
 | ReminderIntegrityTest failed at random | Root cause: Robolectric keeps notifications in static state, and the previous test's app scope was still refreshing against its own repository. Test apps now stop their background work in @After |
+| First-step dialog kept an empty field on the emulator, so Track stayed disabled | FIXED: TextPromptDialog requests focus from inside the dialog's own composition; the core-loop test waits for typed text and enabled buttons. Green on the emulator at 5d88d2e |
