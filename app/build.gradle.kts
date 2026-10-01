@@ -21,6 +21,11 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Links shown in Settings → About. Set at release time in gradle.properties;
+        // empty values hide the link (rename-ready: no product name in code).
+        buildConfigField("String", "SOURCE_URL", "\"${providers.gradleProperty("quest.sourceUrl").getOrElse("")}\"")
+        buildConfigField("String", "SPONSOR_URL", "\"${providers.gradleProperty("quest.sponsorUrl").getOrElse("")}\"")
+        buildConfigField("String", "KOFI_URL", "\"${providers.gradleProperty("quest.kofiUrl").getOrElse("")}\"")
     }
 
     signingConfigs {

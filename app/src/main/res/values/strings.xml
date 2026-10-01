@@ -4,4 +4,5 @@
     <!-- The ONLY place the product name lives in the app (rename-ready, see docs/DECISIONS.md).
          Everything else references @string/app_name or stringResource(R.string.app_name). -->
     <string name="app_name" translatable="false">NextQuest</string>
+    <string name="share_capture_label">Capture as quest</string>
 </resources>

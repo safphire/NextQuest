@@ -1,0 +1,134 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+package dev.dreamweave.quest.ui.sheets
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Celebration
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.dp
+import dev.dreamweave.quest.core.Completion
+import dev.dreamweave.quest.core.QuestState
+import dev.dreamweave.quest.core.Xp
+import dev.dreamweave.quest.ui.components.LimeButton
+import dev.dreamweave.quest.ui.components.MetaLabel
+import dev.dreamweave.quest.ui.components.QuietButton
+import dev.dreamweave.quest.ui.theme.Quest
+
+/**
+ * "What's next?" — shown right after Done. A tracked quest must leave with a new next
+ * step (principle 4) unless the quest itself is finished. Swiping it away is disabled;
+ * "Not yet" keeps the step open instead.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WhatsNextSheet(
+    state: QuestState,
+    stepId: String,
+    onCancel: () -> Unit,
+    onConfirm: (nextStep: String?, finishOwner: Boolean) -> Unit,
+) {
+    val c = Quest.colors
+    var finishing by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    if (state.steps[stepId] == null) {
+        LaunchedEffect(stepId) { onCancel() }
+        return
+    }
+    val plan = remember(state, stepId, finishing) { Completion.plan(state, stepId, finishing) }
+    val finishPlan = remember(state, stepId) { Completion.plan(state, stepId, true) }
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
+    val stepText = state.steps.getValue(stepId).text
+    val owner = state.quests[plan.ownerId]
+    val nextOwner = plan.nextOwnerId?.let { state.quests[it] }
+    val canSave = text.isNotBlank() || !plan.nextRequired
+
+    fun confirm() {
+        if (canSave) onConfirm(text.trim().ifEmpty { null }, finishing)
+    }
+
+    ModalBottomSheet(onDismissRequest = {}, sheetState = sheet, containerColor = c.surface) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).imePadding().navigationBarsPadding()) {
+            MetaLabel("Done · +${Xp.STEP} XP")
+            Text(stepText, style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
+            Spacer(Modifier.height(12.dp))
+            if (nextOwner == null) {
+                // Finishing the whole quest: nothing else to ask.
+                Text("Complete “${owner?.title}”?", style = MaterialTheme.typography.titleLarge, color = c.text)
+                Spacer(Modifier.height(16.dp))
+                LimeButton(
+                    "Complete quest · +${Xp.QUEST} XP", icon = Icons.Rounded.Celebration, large = true,
+                    onClick = { onConfirm(null, true) }, modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(onClick = { finishing = false }, modifier = Modifier.fillMaxWidth()) { Text("Not finished yet") }
+            } else {
+                Text("What's next?", style = MaterialTheme.typography.titleLarge, color = c.text)
+                if (nextOwner.id != plan.rootId || finishing) {
+                    Text("Next step for “${nextOwner.title}”", style = MaterialTheme.typography.bodyMedium, color = c.violet)
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.replace("\n", "") },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                    placeholder = { Text("The very next physical action") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { confirm() }),
+                )
+                Spacer(Modifier.height(12.dp))
+                LimeButton(
+                    if (plan.nextRequired || text.isNotBlank()) "Set next step" else "Done",
+                    icon = Icons.Rounded.Check, large = true, enabled = canSave,
+                    onClick = { confirm() }, modifier = Modifier.fillMaxWidth(),
+                )
+                if (!finishing && finishPlan.canFinishOwner) {
+                    Spacer(Modifier.height(8.dp))
+                    QuietButton(
+                        if (finishPlan.ownerIsRoot) "Complete quest · +${Xp.QUEST} XP" else "Complete subquest · +${Xp.SUBQUEST} XP",
+                        onClick = {
+                            if (finishPlan.ownerIsRoot || !finishPlan.nextRequired) {
+                                onConfirm(null, true)
+                            } else {
+                                finishing = true
+                                text = ""
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Not yet — keep the step open") }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+    LaunchedEffect(finishing) { runCatching { focus.requestFocus() } }
+}
