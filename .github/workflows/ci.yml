@@ -16,6 +16,7 @@ jobs:
   build:
     name: Build, unit tests, lint, debug APK
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 

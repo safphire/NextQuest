@@ -187,8 +187,10 @@ stops it from firing again.
 - Without the grant, everything uses `setAndAllowWhileIdle` (may be a few
   minutes late). Settings explains this and links to the system screen.
 - Without notification permission nothing can be shown. The permission is
-  only asked for when the user first sets a reminder, and Settings shows its
-  state.
+  asked for once, in context: when the user first sets a reminder or turns on
+  the digest or streak guard. Those two are on by default, so they count as the
+  first reminders, and the question comes shortly after the main screen first
+  appears (never during onboarding). Settings shows the permission's state.
 
 ### D-303 · Snooze is an event, Skip is a dismissal
 Snooze 1h writes `step.snoozed` (synced, so other devices don't ring as well).
@@ -291,9 +293,17 @@ multi-user mode only needs a user table and a login.
   consent page with the admin password (or the signed-in admin session plus
   its CSRF token).
 - At most 50 *approved* clients. Registrations the owner never approved don't
-  count and are deleted after 24h; so are approved clients without a live
-  token for 24h. Disconnecting on the server page deletes the client and its
-  tokens: the connector has to be added again.
+  count and are deleted after 24h; so are approved clients with no live token
+  and no approval in the last 24h (every consent refreshes the approval, so a
+  client being re-authorized is never purged between code and token).
+  Disconnecting on the server page deletes the client and its tokens: the
+  connector has to be added again.
+- At most 200 never-approved registrations are kept. Beyond that the oldest
+  ones are evicted, but only those older than 10 minutes, so a registration
+  flood can't evict the connector the owner is approving; if none is that old,
+  registration answers `429 temporarily_unavailable`. Registration is also
+  limited to 20 per hour per address (IPv6: per /64), at most 10 redirect URIs
+  of at most 2,048 characters, and a 40-character name.
 - Only PKCE S256 is accepted.
 - Codes are single-use. Replaying one — including losing the race against a
   concurrent exchange — revokes every token of that client (tokens aren't
@@ -301,9 +311,11 @@ multi-user mode only needs a user table and a login.
   The revocation is committed outside the failing transaction, so it sticks.
 - Refresh tokens rotate. Reusing a rotated refresh token revokes its whole
   family. A refresh token only works for the client it was issued to.
-- Tokens carry the audience of the code (RFC 8707 `resource`, normalised to
-  `<PUBLIC_URL>/mcp`) through every rotation; `/mcp` refuses a token bound to
-  any other audience (e.g. after `PUBLIC_URL` changed).
+- Tokens carry the audience of the code (RFC 8707 `resource`) through every
+  rotation. It is always `<PUBLIC_URL>/mcp`, whether or not the client sent
+  `resource`; `/mcp` refuses a token bound to any other audience (e.g. after
+  `PUBLIC_URL` changed). Unbound tokens issued before this still work and are
+  bound on their next refresh.
 - Errors are redirected to the client, except when the client or redirect
   URI itself is invalid (RFC 6749 §4.1.2.1) or the client was never approved
   (D-507).
@@ -323,26 +335,45 @@ snapshot of a dead or removed phone can therefore push that phone's events,
 while no live device can occupy another live device's `(deviceId, seq)`
 slots.
 
+Known limitation: a paired device could push events under a removed device's
+id and occupy sequence numbers that device would use if it re-paired with the
+same id. Acceptable because every paired device belongs to the owner.
+
 ### D-505 · Limits and the call log
 Defaults, each configurable by environment variable:
-- 60 MCP tool calls per minute per connector.
+- 60 MCP requests per minute per connector, whatever the method (every
+  request is a log write); a refused `tools/call` is a tool error, other
+  methods get JSON-RPC error `-32000`.
 - 30 proposals per hour per connector.
 - Login and pairing: 10 attempts per 10 minutes per IP.
 - Wrong admin passwords: 100 per hour across all IPs. A botnet can't
   out-guess the per-IP limit; while the budget is spent nobody can sign in,
   but a signed-in owner keeps their session and can still approve connectors.
+  Each attempt reserves a failure atomically and a correct password returns
+  it, so concurrent guesses can't overshoot. The counters are in memory: an
+  owner locked out by someone else's guessing can restart the server to clear
+  them (the sign-in page says so).
 - Request bodies: 64 KB for OAuth, login, admin forms and pairing, 4 MB for
   `POST /v1/events`, 1 MB for `/mcp`; larger ones get 413, whether declared
   in `Content-Length` or streamed.
 
-The IP is the socket peer's address, never a reverse-DNS name. Behind a
-reverse proxy every client would share the proxy's address, so `TRUST_PROXY`
-(number of proxy hops, default 0) takes it from `X-Forwarded-For`, counting
-that many entries from the right; entries further left are client-supplied.
-Expired limiter keys are swept, so memory stays bounded.
+The IP is the socket peer's address, never a reverse-DNS name; IPv6
+addresses are keyed by their /64, which one client usually holds whole.
+Behind a reverse proxy every client would share the proxy's address, so
+`TRUST_PROXY` (number of proxy hops; 0 in the server, 1 in
+`docker-compose.yml`) takes it from `X-Forwarded-For`, counting that many
+entries from the right; entries further left are client-supplied. The header
+is honoured only when the peer is loopback, RFC 1918 (including Docker
+bridges), link-local or IPv6 unique-local — where a proxy on the same host or
+network connects from. A client reaching a published port directly from the
+internet can't choose its key, but one relayed by Docker's userland proxy
+(e.g. over IPv6) can appear private, hence `TRUST_PROXY=0` when nothing sits
+in front. Expired
+limiter keys are swept, so memory stays bounded.
 
 Every MCP request (not notifications) is logged with the connector name,
-method, tool, outcome and a short detail; the newest 1,000 per user are kept.
+method, tool, outcome and a short detail, including rate-limited ones and
+internal errors (`-32603`); the newest 1,000 per user are kept.
 The log is visible on the admin page. Query strings and bodies are never
 logged.
 
@@ -357,6 +388,9 @@ Registration is open, so a client's name and redirect URIs are whatever
 anyone sent. Until the owner first approves a client:
 - Its redirect URI isn't trusted: authorization errors and a *Deny* are shown
   on a page instead of being redirected (no open redirect via registration).
+- Its name is ASCII letters, digits, spaces and `._-()` only, so a look-alike
+  from another script ("Сlaude" with a Cyrillic С) can't read as a vendor
+  while mapping to none: the foreign letters are dropped.
 - Its name can't claim a vendor. A name that maps to Claude or ChatGPT
   (`ProposalSource.fromClientName`) is kept only when every redirect URI is on
   that vendor's hosts (`claude.ai`, `claude.com`, `anthropic.com`;

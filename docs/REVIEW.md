@@ -201,3 +201,65 @@ secrets, session cookie flags, CSRF tokens, gap-free cursors, non-root image.
 | Code-replay race skips revocation | minor | FIXED in round 1 (pending CI) |
 | Compose publishes the plain-HTTP port on all interfaces | minor | FIXED in round 1 (pending CI) |
 | Nits: token audience binding, constant-time CSRF compare, `next` backslash, logout cookie attributes, raw device name in logs, PushResponse.cursor docs | nit | FIXED in round 1 (pending CI) |
+
+### P5 round 2 (fresh reviewer, head 839bab7) — CHANGES NEEDED
+All 12 round-1 findings verified fixed. Server migration 2 upgrades existing
+databases correctly; acceptance items (no state change without user
+acceptance, cap never exceeded via MCP/sync, compose + suite) PASS.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| N1 Unapproved DCR clients unbounded (disk/memory); long redirect URIs; IPv6 keyed per address | major | FIXED: cap of 200 unapproved clients (oldest >10 min evicted, else 429), 2,048-char URIs, IPv6 keyed by /64 |
+| N2/N3 `TRUST_PROXY` default leaves one bucket behind the documented proxy; trusted from any peer | minor | FIXED: X-Forwarded-For honoured only from loopback/private peers; compose defaults to 1; docs say 0 for direct exposure |
+| N4 Global password ceiling: owner lockout, non-atomic check | minor | FIXED: reserve-then-refund (exactly 100 under concurrency); restart resets it, documented on the page and in D-505 |
+| N5 A paired device can occupy a removed device's future sequence numbers | minor | Accepted known limitation (single-user server; all paired devices are the owner's) — D-504 |
+| N6 Unicode look-alike vendor names | nit | FIXED |
+| N7 Tokens without `resource` not audience-bound | nit | FIXED |
+| N8 Purge can drop a client mid-re-authorization | nit | FIXED |
+| N9 Only tools/call rate-limited; internal errors not logged | nit | FIXED |
+| N10 BIND_ADDRESS/PORT documentation | nit | FIXED |
+
+### P2 + P3 round 2 (fresh reviewer, head 839bab7) — CHANGES NEEDED
+All round-1 findings verified fixed except one; acceptance items (never
+stepless except notification Done, cap via UI, core loop, 48dp targets,
+alarms after reboot) PASS by inspection.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Round-1 cancellation fix ineffective: `withContext(NonCancellable + io)` re-dispatches and can still throw on return, skipping the in-memory update | major | FIXED: post-validation work runs in a dispatcher-free `NonCancellable` block with the IO switch inside; regression test cancels mid-insert on real IO |
+| D-302 says permission is asked only when a reminder is first set, but the default-on digest now asks after first launch | minor | FIXED: D-302 records the decision |
+| Undo reads the current tab at tap time | nit | FIXED: captured at drop time |
+| Back on AlarmActivity leaves the insistent notification ringing | nit | Known issue (Snooze/Done on the notification still stop it) |
+| Calendar ripple covers the 2dp gutter | nit | Accepted (cosmetic) |
+| No confirmation when accepting a proposal without XP | nit | FIXED: "Accepted." again |
+
+### P4 round 2 (fresh reviewer) — PASS
+All ten round-1 findings verified fixed.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| An unreadable note looks foreign and forks into a suffixed duplicate | minor | FIXED: the mirror run aborts (and retries later) instead |
+| "Change folder" may show the old folder's error until the next run | nit | Accepted |
+
+## P6 — Integration
+
+### Round 1 (independent reviewer) — CHANGES NEEDED
+Verified: migration matches the entity; push paging can't loop; pull never
+skips past future events; lock order can't deadlock; pulled events marked
+pushed; `mcp:` events never pushed; token excluded from backup; pairing links
+only pre-fill (https, explicit confirmation). The integration test really
+runs pair → push → MCP OAuth + `propose_add_quest` → pull → accept → server
+and second phone agree. Acceptance: no state change without acceptance PASS;
+cap via sync/MCP PASS by design.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Room schema `2.json` not committed | major | Taken from CI's generated output and committed |
+| Restored install keeps server settings but not the token: looks paired, never syncs | major | FIXED: `SyncEngine.reconcile()` at startup forgets the pairing and says "pair again" |
+| Reset detection only when pushing; never re-uploads | minor | FIXED: empty push probes the server's latest cursor every round; reset → pull from 0 and mark the log unpushed |
+| Non-retryable push error (e.g. 413) blocks pulls forever | minor | FIXED: batches limited by size as well as count; pull runs even when the push failed |
+| 401 doesn't actually stop retrying | minor | FIXED: the engine forgets the token and the worker cancels all sync work |
+| REPLACE cancels a running sync on every edit | minor | FIXED: KEEP, plus extra push passes at the end of a round |
+| Pairing in the UI's coroutine scope | minor | FIXED: app scope, local writes NonCancellable |
+| Integration test doesn't cover WorkManager, the cap via sync, future refusals | minor | Known gap (cap via sync is covered by the core property test) |
+| Nits: substring match on "future", pair link while paired, `commit()` on main, imports don't trigger sync | nit | Pair link while paired FIXED (ignored with a message); others accepted |

@@ -127,8 +127,11 @@ dependencies {
 
 // Full stack traces of failing tests in the console (CI logs are the only window into them).
 tasks.withType<Test>().configureEach {
+    // A hung test (Robolectric main-looper deadlock, a wait that never ends) must fail the
+    // build within minutes, and the log must show which test was running.
+    timeout.set(java.time.Duration.ofMinutes(15))
     testLogging {
-        events("failed")
+        events("started", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         showStandardStreams = false
     }
