@@ -108,6 +108,15 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # The emulator needs ~7 GB for its data partition on top of the Gradle build; the
+      # runner image doesn't have that free by default (FATAL "Not enough space to create
+      # userdata partition"). Drop toolchains this job never uses.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules /usr/share/swift
+          df -h /
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -125,6 +134,7 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
+          disk-size: 4096M
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: ./gradlew :data:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 
