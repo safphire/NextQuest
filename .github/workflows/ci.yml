@@ -65,8 +65,8 @@ jobs:
           if [ -n "$(git status --porcelain data/schemas schema)" ]; then
             echo "::error::Generated files are out of date — commit them:"
             git status --porcelain data/schemas schema
-            git diff -- schema | head -200
-            find data/schemas -name '*.json' -newer settings.gradle.kts -print -exec cat {} \;
+            git diff -- schema data/schemas | head -400
+            git ls-files --others --exclude-standard data/schemas | xargs -r -I{} sh -c 'echo "== {}"; cat "{}"'
             exit 1
           fi
 

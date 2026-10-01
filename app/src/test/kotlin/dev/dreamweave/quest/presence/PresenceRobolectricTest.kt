@@ -18,7 +18,6 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowAlarmManager
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 @RunWith(AndroidJUnit4::class)
@@ -53,7 +52,7 @@ class PresenceRobolectricTest {
         assertEquals(due, alarms.nextAlarmClock?.triggerTime)
 
         // A reboot drops every alarm…
-        ShadowAlarmManager.reset()
+        shadowOf(alarms).scheduledAlarms.toList().forEach { a -> a.operation?.let(alarms::cancel) }
         assertEquals(null, alarms.nextAlarmClock)
         // …and BOOT_COMPLETED re-arms them, including the digest and streak guard.
         SystemEventsReceiver().onReceive(app, Intent(Intent.ACTION_BOOT_COMPLETED))
@@ -94,7 +93,10 @@ class PresenceRobolectricTest {
         val pair = MainActivity.parse(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("dwquest://pair?server=https%3A%2F%2Fq.example&code=ABCD-1234")))
         assertIs<ExternalRequest.Pair>(pair)
         assertEquals("https://q.example", pair.serverUrl)
-        assertNotNull(MainActivity.parse(Intent().putExtra(MainActivity.EXTRA_QUEST_ID, "x")))
+        // The launcher is exported: only well-formed quest ids are accepted.
+        assertEquals(null, MainActivity.parse(Intent().putExtra(MainActivity.EXTRA_QUEST_ID, "x")))
+        val id = dev.dreamweave.quest.core.Ids.newId()
+        assertEquals(ExternalRequest.OpenQuest(id), MainActivity.parse(Intent().putExtra(MainActivity.EXTRA_QUEST_ID, id)))
     }
 
     @Suppress("unused")

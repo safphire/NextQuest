@@ -2,6 +2,7 @@
 package dev.dreamweave.quest
 
 import android.app.Application
+import android.util.Log
 import androidx.work.Configuration
 import dev.dreamweave.quest.data.DataContainer
 import dev.dreamweave.quest.presence.Notifications
@@ -10,6 +11,7 @@ import dev.dreamweave.quest.presence.ReminderScheduler
 import dev.dreamweave.quest.sync.SyncWorker
 import dev.dreamweave.quest.vault.Backups
 import dev.dreamweave.quest.vault.VaultWorker
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -54,7 +56,11 @@ class QuestApp : Application(), Configuration.Provider {
 
 /** Process-wide dependencies (manual DI). */
 class AppContainer(app: Application) {
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** Background work (alarms, widget, sync scheduling). A failure there is logged, never fatal. */
+    val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, e -> Log.e("QuestApp", "Background task failed", e) },
+    )
     val data = DataContainer(app)
     val repository get() = data.repository
     val actions get() = data.actions

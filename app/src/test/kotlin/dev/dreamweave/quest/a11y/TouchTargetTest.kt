@@ -28,6 +28,10 @@ import kotlin.test.fail
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [34], qualifiers = "w360dp-h740dp-xxhdpi")
 class TouchTargetTest {
+    init {
+        org.robolectric.shadows.ShadowLog.stream = System.out
+    }
+
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 

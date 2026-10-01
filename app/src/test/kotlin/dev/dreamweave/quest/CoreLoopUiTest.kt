@@ -33,6 +33,10 @@ import kotlin.test.assertTrue
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [34])
 class CoreLoopUiTest {
+    init {
+        org.robolectric.shadows.ShadowLog.stream = System.out
+    }
+
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
@@ -50,7 +54,7 @@ class CoreLoopUiTest {
                 }
             }
         } catch (e: ComposeTimeoutException) {
-            val tree = runCatching { compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString() }.getOrElse { "<no tree: $it>" }
+            val tree = runCatching { compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString(maxDepth = Int.MAX_VALUE) }.getOrElse { "<no tree: $it>" }
             val quests = repository.state.value?.quests?.values?.map { "${it.title}/${it.status}" }
             throw AssertionError("Timed out waiting for $what. Quests: $quests\n$tree", e)
         }

@@ -135,6 +135,6 @@ tasks.withType<Test>().configureEach {
     testLogging {
         events("started", "failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-        showStandardStreams = false
+        showStandardStreams = true // Robolectric log output of the UI tests (ShadowLog)
     }
 }
