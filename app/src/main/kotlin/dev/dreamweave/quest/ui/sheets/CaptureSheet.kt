@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import dev.dreamweave.quest.core.Limits
 import dev.dreamweave.quest.ui.components.LimeButton
 import dev.dreamweave.quest.ui.theme.Quest
 
@@ -34,7 +35,7 @@ import dev.dreamweave.quest.ui.theme.Quest
  */
 @Composable
 fun CaptureSheet(onDismiss: () -> Unit, onCapture: (String) -> Unit, initial: String = "") {
-    var text by rememberSaveable(initial) { mutableStateOf(initial.replace("\n", " ").take(500)) }
+    var text by rememberSaveable(initial) { mutableStateOf(initial.replace("\n", " ").take(Limits.MAX_TITLE)) }
     val focus = remember { FocusRequester() }
     val c = Quest.colors
     var saved by remember { mutableStateOf(false) }
@@ -45,7 +46,7 @@ fun CaptureSheet(onDismiss: () -> Unit, onCapture: (String) -> Unit, initial: St
             onDismiss()
         }
     }
-    BottomPanel(onDismissRequest = onDismiss) {
+    BottomPanel(title = "Capture", onDismissRequest = onDismiss) {
         // The dialog's own window has the keyboard, so read the controller in here.
         val keyboard = LocalSoftwareKeyboardController.current
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
@@ -54,7 +55,7 @@ fun CaptureSheet(onDismiss: () -> Unit, onCapture: (String) -> Unit, initial: St
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = text,
-                onValueChange = { text = it.replace("\n", "") },
+                onValueChange = { text = it.replace("\n", "").take(Limits.MAX_TITLE) },
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 placeholder = { Text("What's on your mind?") },
                 singleLine = true,

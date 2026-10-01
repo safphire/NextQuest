@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -29,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import dev.dreamweave.quest.core.Completion
+import dev.dreamweave.quest.core.Limits
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.core.Xp
 import dev.dreamweave.quest.ui.components.LimeButton
@@ -59,8 +59,8 @@ fun WhatsNextSheet(
     val plan = remember(state, stepId, finishing) { Completion.plan(state, stepId, finishing) }
     val finishPlan = remember(state, stepId) { Completion.plan(state, stepId, true) }
     val stepText = state.steps.getValue(stepId).text
-    val owner = state.quests[plan.ownerId]
-    val nextOwner = plan.nextOwnerId?.let { state.quests[it] }
+    // nextOwnerId is null only when finishing a top-level quest, which this panel completes directly.
+    val nextOwner = state.quests.getValue(plan.nextOwnerId ?: plan.rootId)
     val canSave = text.isNotBlank() || !plan.nextRequired
 
     var closing by remember { mutableStateOf(false) }
@@ -79,56 +79,45 @@ fun WhatsNextSheet(
         }
     }
 
-    BottomPanel(onDismissRequest = {}, dismissible = false) {
+    BottomPanel(title = "What's next?", onDismissRequest = {}, dismissible = false) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             MetaLabel("Done · +${Xp.STEP} XP")
             Text(stepText, style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
             Spacer(Modifier.height(12.dp))
-            if (nextOwner == null) {
-                // Finishing the whole quest: nothing else to ask.
-                Text("Complete “${owner?.title}”?", style = MaterialTheme.typography.titleLarge, color = c.text)
-                Spacer(Modifier.height(16.dp))
-                LimeButton(
-                    "Complete quest · +${Xp.QUEST} XP", icon = Icons.Rounded.Celebration, large = true,
-                    onClick = { closeThen { onConfirm(null, true) } }, modifier = Modifier.fillMaxWidth(),
+            Text("What's next?", style = MaterialTheme.typography.titleLarge, color = c.text)
+            if (nextOwner.id != plan.rootId || finishing) {
+                Text("Next step for “${nextOwner.title}”", style = MaterialTheme.typography.bodyMedium, color = c.violet)
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.replace("\n", "").take(Limits.MAX_TEXT) },
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                placeholder = { Text("The very next physical action") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { confirm() }),
+            )
+            Spacer(Modifier.height(12.dp))
+            LimeButton(
+                if (plan.nextRequired || text.isNotBlank()) "Set next step" else "Done",
+                icon = Icons.Rounded.Check, large = true, enabled = canSave,
+                onClick = { confirm() }, modifier = Modifier.fillMaxWidth(),
+            )
+            if (!finishing && finishPlan.canFinishOwner) {
+                Spacer(Modifier.height(8.dp))
+                QuietButton(
+                    if (finishPlan.ownerIsRoot) "Complete quest · +${Xp.QUEST} XP" else "Complete subquest · +${Xp.SUBQUEST} XP",
+                    onClick = {
+                        if (finishPlan.ownerIsRoot || !finishPlan.nextRequired) {
+                            closeThen { onConfirm(null, true) }
+                        } else {
+                            finishing = true
+                            text = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                TextButton(onClick = { finishing = false }, modifier = Modifier.fillMaxWidth()) { Text("Not finished yet") }
-            } else {
-                Text("What's next?", style = MaterialTheme.typography.titleLarge, color = c.text)
-                if (nextOwner.id != plan.rootId || finishing) {
-                    Text("Next step for “${nextOwner.title}”", style = MaterialTheme.typography.bodyMedium, color = c.violet)
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it.replace("\n", "") },
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
-                    placeholder = { Text("The very next physical action") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { confirm() }),
-                )
-                Spacer(Modifier.height(12.dp))
-                LimeButton(
-                    if (plan.nextRequired || text.isNotBlank()) "Set next step" else "Done",
-                    icon = Icons.Rounded.Check, large = true, enabled = canSave,
-                    onClick = { confirm() }, modifier = Modifier.fillMaxWidth(),
-                )
-                if (!finishing && finishPlan.canFinishOwner) {
-                    Spacer(Modifier.height(8.dp))
-                    QuietButton(
-                        if (finishPlan.ownerIsRoot) "Complete quest · +${Xp.QUEST} XP" else "Complete subquest · +${Xp.SUBQUEST} XP",
-                        onClick = {
-                            if (finishPlan.ownerIsRoot || !finishPlan.nextRequired) {
-                                closeThen { onConfirm(null, true) }
-                            } else {
-                                finishing = true
-                                text = ""
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
             }
             TextButton(onClick = { closeThen(onCancel) }, modifier = Modifier.fillMaxWidth()) { Text("Not yet — keep the step open") }
             Spacer(Modifier.height(12.dp))

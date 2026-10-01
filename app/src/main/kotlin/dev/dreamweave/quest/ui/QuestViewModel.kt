@@ -3,6 +3,7 @@ package dev.dreamweave.quest.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import android.util.Log
 import androidx.lifecycle.viewModelScope
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Achievement
@@ -11,12 +12,16 @@ import dev.dreamweave.quest.core.QuestStatus
 import dev.dreamweave.quest.data.AppSettings
 import dev.dreamweave.quest.data.CommitResult
 import dev.dreamweave.quest.data.QuestActions
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -51,8 +56,32 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
     private val _events = MutableSharedFlow<UiEvent>(extraBufferCapacity = 16)
     val events: SharedFlow<UiEvent> = _events.asSharedFlow()
 
+    private val _loadError = MutableStateFlow<String?>(null)
+    /** Set when the quest log couldn't be read; the UI shows it with a Retry instead of crashing. */
+    val loadError: StateFlow<String?> = _loadError.asStateFlow()
+
+    /** A user action that failed unexpectedly (storage full, database error) gets a calm message, never a crash. */
+    private val failures = CoroutineExceptionHandler { _, e ->
+        Log.e(TAG, "action failed", e)
+        message("That didn't work — nothing was changed. Try again; if it keeps happening, restart the app.")
+    }
+
     init {
-        viewModelScope.launch { repo.load() }
+        loadLog()
+    }
+
+    fun loadLog() {
+        _loadError.value = null
+        viewModelScope.launch {
+            try {
+                repo.load()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "loading the quest log failed", e)
+                _loadError.value = "Your quests couldn't be loaded. Nothing has been deleted."
+            }
+        }
     }
 
     /**
@@ -66,7 +95,7 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
         onRejected: (reason: String) -> Boolean = { false },
         block: suspend QuestActions.() -> CommitResult,
     ) {
-        viewModelScope.launch {
+        viewModelScope.launch(failures) {
             when (val r = actions.block()) {
                 is CommitResult.Ok -> {
                     feedback(r.change.before, r.change.after, xpAlreadyShown)
@@ -92,7 +121,7 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Runs a suspending UI task in the view model's scope (survives recomposition). */
     fun launch(block: suspend () -> Unit) {
-        viewModelScope.launch { block() }
+        viewModelScope.launch(failures) { block() }
     }
 
     fun message(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) {
@@ -100,11 +129,11 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {
-        viewModelScope.launch { container.settings.update(transform) }
+        viewModelScope.launch(failures) { container.settings.update(transform) }
     }
 
     fun acceptAll() {
-        viewModelScope.launch {
+        viewModelScope.launch(failures) {
             val before = repo.current()
             val n = actions.acceptAll()
             val after = repo.current()
@@ -121,6 +150,8 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        private const val TAG = "QuestViewModel"
+
         /** Fold reasons are written for logs; this makes them calm and human. */
         fun humanize(reason: String): String = when {
             "slots are full" in reason -> "All slots are full — finish or park a quest first."

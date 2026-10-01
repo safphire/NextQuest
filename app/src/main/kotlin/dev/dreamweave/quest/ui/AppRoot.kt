@@ -3,15 +3,14 @@ package dev.dreamweave.quest.ui
 
 import android.Manifest
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.platform.LocalContext
-import dev.dreamweave.quest.presence.Notifications
-import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,20 +29,24 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -54,6 +57,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import dev.dreamweave.quest.core.Xp
+import dev.dreamweave.quest.presence.Notifications
 import dev.dreamweave.quest.ui.board.BoardScreen
 import dev.dreamweave.quest.ui.calendar.CalendarScreen
 import dev.dreamweave.quest.ui.onboarding.OnboardingScreen
@@ -130,9 +134,22 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
     }
     val s = state
     val set = settings
+    val loadError by vm.loadError.collectAsStateWithLifecycle()
     if (s == null || set == null) {
-        Box(Modifier.fillMaxSize().background(c.background), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = c.violet)
+        Box(Modifier.fillMaxSize().background(c.background).padding(24.dp), contentAlignment = Alignment.Center) {
+            val error = loadError
+            if (error == null) {
+                CircularProgressIndicator(color = c.violet)
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(error, style = MaterialTheme.typography.titleMedium, color = c.text, textAlign = TextAlign.Center)
+                    Text(
+                        "Your vault copies and snapshots are untouched.",
+                        style = MaterialTheme.typography.bodyMedium, color = c.textSecondary, textAlign = TextAlign.Center,
+                    )
+                    TextButton(onClick = { vm.loadLog() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Try again") }
+                }
+            }
         }
         return
     }

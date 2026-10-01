@@ -19,6 +19,8 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -34,6 +36,8 @@ import dev.dreamweave.quest.ui.theme.Quest
  */
 @Composable
 fun BottomPanel(
+    /** Announced by TalkBack when the panel opens. */
+    title: String,
     onDismissRequest: () -> Unit,
     dismissible: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
@@ -50,7 +54,7 @@ fun BottomPanel(
         SideEffect { window?.setGravity(Gravity.BOTTOM) }
         val c = Quest.colors
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().semantics { paneTitle = title },
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = c.surface,
         ) {
