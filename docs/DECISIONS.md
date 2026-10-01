@@ -205,16 +205,59 @@ for the next step the same way the app does.
 
 ### D-401 · The vault mirror is one-way and touches only its own files
 The user picks a folder through SAF. The app writes `Quests/<title>.md` per
-quest, with `id:` front matter, and daily snapshots to `Quests/.backups/`,
-keeping the newest 8. Files it didn't write are never modified or deleted.
+quest, with `id:` front matter, and daily snapshots to `Quests/.backups/`.
 Edits made in Obsidian are not read back: the event log is the source of
 truth, and two-way merge of free text is out of scope for v1.
+
+Files it didn't write are never modified or deleted:
+- A note is overwritten only if its `id:` is the quest's own id, or it is
+  exactly what the last mirror wrote. A manifest
+  (`.backups/.mirror-manifest.json`) records the name and SHA-256 of every
+  note the mirror wrote.
+- If another file already has a quest's name, the quest's note gets a short
+  id suffix (`Title (1a2b3c).md`), or the full id if that is taken too.
+  Wikilinks use the same names.
+- A note is deleted after a rename only if the manifest lists it and its
+  content is unchanged. Copies and edited notes stay.
+- User text is flattened to one line in the note body and escaped. It can't
+  start a heading, quote, list, table or code fence, an Obsidian `%%`
+  comment, or a Dataview `key:: value` field.
+- File names are safe on Windows too: no reserved device names, no leading
+  dots, no trailing dots or spaces. They are cut between code points, within
+  180 UTF-8 bytes.
+
+Snapshots:
+- `snapshot-<date>.json` is replaced only by a snapshot that contains every
+  event it holds. Otherwise the new one goes beside it as
+  `snapshot-<date>-<HHmmss>.json`. A fresh install that re-picks the vault
+  can't overwrite the old phone's backup.
+- Each snapshot is written to a temporary file, then renamed.
+- The app never writes an empty snapshot.
+- It keeps the newest 8, plus the one with the most events if that one is
+  older.
+
+Snapshot and mirror run independently, one at a time. The last error shows
+in Settings. A folder whose grant was lost shows "choose it again". Changing
+the folder releases the old grant.
 
 ### D-402 · Snapshots are the event log, and import merges
 A snapshot is a versioned header plus every event. Import validates the file
 and ingests the events through the same path as sync. The fold's dedupe by
 event id makes re-importing harmless, and import never wipes. Events more
 than 24h in the future are refused (D-112) and listed in the report.
+
+A malformed file never crashes the import; the decoder reports it as
+invalid. That covers wrong types, nesting more than 64 levels deep,
+`schemaVersion` ≤ 0, and a header without a positive `exportedAt` or a valid
+`deviceId`.
+
+Events that carry this install's device id but aren't in its log are
+refused. They would take `(deviceId, seq)` slots that the local event factory
+is about to use. Android backup never restores the device id, so a real
+restore never hits this.
+
+Files over 50 MB are refused before they are read in full. Decoding runs off
+the main thread.
 
 ## P5 — Server
 
@@ -245,34 +288,137 @@ multi-user mode only needs a user table and a login.
 ### D-503 · OAuth 2.1 details
 - Dynamic client registration is open, as the MCP clients require. A
   registered client can do nothing until the owner approves it on the
-  consent page with the admin password.
+  consent page with the admin password (or the signed-in admin session plus
+  its CSRF token).
+- At most 50 *approved* clients. Registrations the owner never approved don't
+  count and are deleted after 24h; so are approved clients without a live
+  token for 24h. Disconnecting on the server page deletes the client and its
+  tokens: the connector has to be added again.
 - Only PKCE S256 is accepted.
-- Codes are single-use. Replaying one revokes everything issued from it. The
-  revocation is committed outside the failing transaction, so it sticks.
+- Codes are single-use. Replaying one — including losing the race against a
+  concurrent exchange — revokes every token of that client (tokens aren't
+  linked to the code they came from, and the client is suspect either way).
+  The revocation is committed outside the failing transaction, so it sticks.
 - Refresh tokens rotate. Reusing a rotated refresh token revokes its whole
-  family.
+  family. A refresh token only works for the client it was issued to.
+- Tokens carry the audience of the code (RFC 8707 `resource`, normalised to
+  `<PUBLIC_URL>/mcp`) through every rotation; `/mcp` refuses a token bound to
+  any other audience (e.g. after `PUBLIC_URL` changed).
 - Errors are redirected to the client, except when the client or redirect
-  URI itself is invalid (RFC 6749 §4.1.2.1).
+  URI itself is invalid (RFC 6749 §4.1.2.1) or the client was never approved
+  (D-507).
 - Only hashes of codes and tokens are stored.
 
 ### D-504 · Proposals are written by the server as events
 Write tools validate with `ProposalRules` against the server's own fold, then
 append a `proposal.created` event with the server's device id and actor
 `mcp:<client name>`. Phones receive it through normal sync. The server never
-writes domain events itself.
+writes domain events itself. Validation and append happen under the event
+store's lock against the same fold, so two concurrent proposals can't both
+pass against a stale state (e.g. both claim the last free slot).
+
+Devices push user events of any device id except the server's own and
+another active (paired, not removed) device's. A phone that imported the
+snapshot of a dead or removed phone can therefore push that phone's events,
+while no live device can occupy another live device's `(deviceId, seq)`
+slots.
 
 ### D-505 · Limits and the call log
 Defaults, each configurable by environment variable:
 - 60 MCP tool calls per minute per connector.
 - 30 proposals per hour per connector.
 - Login and pairing: 10 attempts per 10 minutes per IP.
+- Wrong admin passwords: 100 per hour across all IPs. A botnet can't
+  out-guess the per-IP limit; while the budget is spent nobody can sign in,
+  but a signed-in owner keeps their session and can still approve connectors.
+- Request bodies: 64 KB for OAuth, login, admin forms and pairing, 4 MB for
+  `POST /v1/events`, 1 MB for `/mcp`; larger ones get 413, whether declared
+  in `Content-Length` or streamed.
 
-Every MCP call is logged with the connector name, tool, outcome and a short
-detail. The log is visible on the admin page. Query strings and bodies are
-never logged.
+The IP is the socket peer's address, never a reverse-DNS name. Behind a
+reverse proxy every client would share the proxy's address, so `TRUST_PROXY`
+(number of proxy hops, default 0) takes it from `X-Forwarded-For`, counting
+that many entries from the right; entries further left are client-supplied.
+Expired limiter keys are swept, so memory stays bounded.
+
+Every MCP request (not notifications) is logged with the connector name,
+method, tool, outcome and a short detail; the newest 1,000 per user are kept.
+The log is visible on the admin page. Query strings and bodies are never
+logged.
 
 ### D-506 · Origin check on /mcp
 Browser requests to `/mcp` must come from an allowed origin
 (`ALLOWED_ORIGINS`, default claude.ai and chatgpt.com). Requests without an
 `Origin` header, from server-side clients, are allowed. They still need a
 bearer token.
+
+### D-507 · An unapproved client is unverified
+Registration is open, so a client's name and redirect URIs are whatever
+anyone sent. Until the owner first approves a client:
+- Its redirect URI isn't trusted: authorization errors and a *Deny* are shown
+  on a page instead of being redirected (no open redirect via registration).
+- Its name can't claim a vendor. A name that maps to Claude or ChatGPT
+  (`ProposalSource.fromClientName`) is kept only when every redirect URI is on
+  that vendor's hosts (`claude.ai`, `claude.com`, `anthropic.com`;
+  `chatgpt.com`, `openai.com`, and their subdomains) or loopback, where the
+  code never leaves the owner's machine. Otherwise it is stored as
+  "Unverified client (<host>)", or just "Unverified client" if the host
+  itself names a vendor. The name becomes the consent title, the
+  `mcp:<name>` actor and the proposal's source chip, so it is fixed at
+  registration.
+- The consent page shows the redirect host — where the code goes, the one
+  thing a client can't fake — above everything else.
+
+### D-508 · Security headers
+Every response carries `X-Frame-Options: DENY`, `X-Content-Type-Options:
+nosniff`, `Referrer-Policy: no-referrer` and `Content-Security-Policy:
+frame-ancestors 'none'; default-src 'none'; style-src 'unsafe-inline';
+img-src 'self' data:; base-uri 'none'`. Pages have no scripts; QR codes are
+inline SVG. `form-action` is left out on purpose: the consent form posts to
+the server, which redirects to the connector's redirect URI, and Chrome
+applies `form-action` to that redirect too.
+
+## P6 — Integration
+
+### D-601 · The event log is the offline queue
+Room schema v2 adds a `pushed` flag to the events table (migration 1→2;
+existing events start unpushed). A sync round:
+1. Pushes every unpushed user event in batches of 1,000, keyset-paged by id.
+2. Pulls after the stored cursor, page by page, saving the cursor after each
+   page.
+
+Both directions are idempotent, so a round cut short is simply repeated.
+Pulled events are marked pushed. Events written on behalf of AI clients are
+never pushed, because only the server writes them.
+
+A refusal is final: the event is marked and never blocks the queue. The one
+exception is "dated in the future", which waits for the server's clock to
+catch up. Only refusals of this device's own events are shown to the user.
+
+If a push response's cursor is behind ours, the server was reset, and we pull
+from 0.
+
+### D-602 · When sync runs
+WorkManager runs sync, always with a network constraint and exponential
+backoff from 30 s:
+- every 15 minutes while paired (WorkManager's minimum);
+- when the app opens;
+- 5 s after a local change. This is debounced: a newer request replaces a
+  pending one.
+
+A 401 (device removed on the server) stops retrying and asks the user to pair
+again. Disconnecting deletes nothing. Pairing with a server marks the whole
+log unpushed, so a new server receives it.
+
+### D-603 · Pairing links never pair by themselves
+The server page's QR code / `dwquest://pair` link only pre-fills the form in
+Settings. The user sees the server address and taps Pair. The launcher
+activity is exported and any app or web page can fire the link, so pairing
+silently would hand the quest log to whoever made it. Links and typed addresses must be `https://`. Android blocks cleartext traffic
+anyway, and the server is meant to sit behind HTTPS.
+
+### D-604 · Imported events from other devices are uploaded
+A phone that imported a lost phone's snapshot pushes those events too. The
+server refuses only events that belong to another *active* paired device or
+to the server itself (D-504). That still stops one live device from occupying
+another live device's sequence numbers.

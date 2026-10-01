@@ -117,3 +117,87 @@ Remaining issues and resolution:
 - LOW — stored client name untrimmed → trimmed.
 
 P1 closed after three rounds; no open HIGH or MEDIUM items.
+
+## P2 — Data + UI
+
+### Round 1 (independent reviewer, read-only) — CHANGES NEEDED
+Verified compliant: product name only in `app_name`; colors only from tokens;
+lime only on primary actions; slot cap 3–7; capture autofocus + Enter; FAB on
+every route; non-dismissable "What's next?"; resume card; proposals
+accept/edit/reject/track/accept-all; backup rules; no content in logs; exported
+components limited to launcher, system receiver, widget; single-writer
+repository with all-or-nothing commits.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `refold()` before first load leaves the event factory null → every save crashes | major | FIXED in round 1 (pending CI) |
+| Cancellation between DB insert and in-memory update desyncs the fold | major | FIXED in round 1 (pending CI) |
+| Quest whose focused subquest has no step can't be tracked (step attached to root) | major | FIXED in round 1 (pending CI) |
+| Onboarding brain dump lost on configuration change; onboarding toasts dropped | major | FIXED in round 1 (pending CI) |
+| Malformed `EXTRA_QUEST_ID` from another app crashes navigation | minor | FIXED in round 1 (pending CI) |
+| "+15 XP" shown before anything is saved | minor | FIXED in round 1 (pending CI) |
+| Accepting proposals shows no XP / achievement toasts | minor | FIXED in round 1 (pending CI) |
+| Undo after dropping from Later restores to Inbox | minor | FIXED in round 1 (pending CI) |
+| Touch targets under 48dp (step text, calendar day cells) | minor | FIXED in round 1 (pending CI) |
+| Nits: styled share text, pairing link intent-filter + confirmation (P6), dialog state on rotation | nit | Share text and pairing link FIXED; open dialogs on rotation deferred (known issue) |
+
+## P3 — Presence
+
+### Round 1 (independent reviewer, read-only) — CHANGES NEEDED
+Verified correct: manifest system-event filters, non-exported receivers and
+activities, immutable PendingIntents, goAsync handling, exact-alarm and
+full-screen checks with fallbacks, once-only catch-up firing, the next-step
+rule on every Done path (only notification Done is exempt).
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Commit 5cae1db doesn't compile alone (uses P4 vault classes) | major | Known issue: the P3/P4 app code was split by file after the fact. CI gates run on the pushed head (f345a22 onward), where both are present. |
+| Widget shows stale state after an update (state read before `provideContent`) | major | FIXED in round 1 (pending CI) |
+| Second alarm while AlarmActivity is open is ignored (no `onNewIntent`) | minor | FIXED in round 1 (pending CI) |
+| Step notifications stay after the step changes elsewhere; Done on them gives XP | minor | FIXED in round 1 (pending CI) |
+| PendingIntent identity rests on `hashCode` request codes | minor | FIXED in round 1 (pending CI) |
+| Default-on digest / streak guard never ask for notification permission | minor | FIXED in round 1 (pending CI) |
+| Alarm sounds once | minor | FIXED in round 1 (pending CI) |
+| AlarmActivity: one-shot state, no rejection feedback, no Cancel | minor | FIXED in round 1 (pending CI) |
+| Nits: Model.kt KDoc, fired markers for superseded steps, receiver exception handler, empty digest, lock-screen writes, DEVICE_TEST.md missing | nit | FIXED in round 1 (pending CI) |
+
+## P4 — Durability
+
+### Round 1 (independent reviewer, read-only) — CHANGES NEEDED
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Mirror overwrites a user's own note with a quest's file name | blocker | FIXED in round 1 (pending CI) |
+| Mirror deletes user copies of its notes (any file with an app `id:`) | major | FIXED in round 1 (pending CI) |
+| Today's snapshot overwritten with a stale or empty log; in-place truncating write | major | FIXED in round 1 (pending CI) |
+| `SnapshotCodec.decode` throws on non-primitive header fields → import crash | major | FIXED in round 1 (pending CI) |
+| Debounce drops backup requests; daily and mirror workers race | minor | FIXED in round 1 (pending CI) |
+| Snapshot blocked by a failing note; revoked folder grant not surfaced | minor | FIXED in round 1 (pending CI) |
+| Markdown/Dataview injection through newlines in titles and steps | minor | FIXED in round 1 (pending CI) |
+| `sanitize` edge cases: split surrogates, leading dot, reserved names | minor | FIXED in round 1 (pending CI) |
+| Import of an own-device event with a future seq blocks local writes; no size cap; fold on Main | minor | FIXED in round 1 (pending CI) |
+| Header validation nits | nit | FIXED in round 1 (pending CI) |
+
+## P5 — Server
+
+### Round 1 (independent security reviewer, read-only) — CHANGES NEEDED
+Verified correct: parameterized SQL everywhere, HTML escaping of every
+interpolation, exact redirect-URI matching, mandatory S256 with constant-time
+compare, single-use codes, refresh rotation with family revocation, hashed
+secrets, session cookie flags, CSRF tokens, gap-free cursors, non-root image.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| No request body size limits (unauthenticated OOM) | major | FIXED in round 1 (pending CI) |
+| Open DCR fills the 50-client cap permanently | major | FIXED in round 1 (pending CI) |
+| Rate limits keyed on `remoteHost` (reverse DNS; one bucket behind a proxy); unbounded limiter map | major | FIXED in round 1 (pending CI) |
+| Consent page can be framed (clickjacking) | major | FIXED in round 1 (pending CI) |
+| Open redirect through DCR error redirects | minor | FIXED in round 1 (pending CI) |
+| Connector names can impersonate Claude/ChatGPT | minor | FIXED in round 1 (pending CI) |
+| Malformed MCP params → HTTP 500 for the whole batch | minor | FIXED in round 1 (pending CI) |
+| Not every MCP call logged; call log never pruned | minor | FIXED in round 1 (pending CI) |
+| `step_id` not checked against `quest_id` | minor | FIXED in round 1 (pending CI) |
+| Proposal validation not atomic with the append | minor | FIXED in round 1 (pending CI) |
+| Code-replay race skips revocation | minor | FIXED in round 1 (pending CI) |
+| Compose publishes the plain-HTTP port on all interfaces | minor | FIXED in round 1 (pending CI) |
+| Nits: token audience binding, constant-time CSRF compare, `next` backslash, logout cookie attributes, raw device name in logs, PushResponse.cursor docs | nit | FIXED in round 1 (pending CI) |

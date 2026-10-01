@@ -141,3 +141,30 @@ Ops: `add_quest`, `set_next_step`, `complete_step`, `add_subquest`,
 3. The user's decision becomes events (`ProposalRules.decide`): the resulting
    domain events followed by `proposal.accepted` / `edited` / `rejected`,
    committed through the same validation as any other edit.
+
+## Presence (app)
+
+`ReminderPlan` computes everything that should be armed from state and
+settings alone: digest, streak guard, step reminders and alarms. It is pure
+and unit-tested. `ReminderScheduler` diffs that plan against what is armed
+and re-arms after every change, on boot, on time and time-zone changes, after
+an app update and when the exact-alarm grant changes. The Glance widget reads
+the repository's state flow. Details and fallbacks: D-301..D-304.
+
+## Durability (app)
+
+`VaultWriter` mirrors one Markdown note per quest into a folder the user
+picks, and touches only files it wrote. `Backups` exports and imports
+snapshots, which are the whole event log, so an import merges through the
+same ingest path as sync. A daily WorkManager job writes a snapshot into the
+vault. Details: D-401, D-402.
+
+## Sync (data)
+
+`SyncEngine` runs one round: push the unpushed user events (the `pushed` flag
+on the Room table is the offline queue), then pull after the stored cursor.
+`SyncWorker` runs it periodically, when the app opens, and shortly after
+local changes, with a network constraint and exponential backoff. The
+transport is a small interface over the Ktor client, so the integration test
+drives the real server module in-process. Details: [SYNC.md](SYNC.md),
+D-601..D-604.

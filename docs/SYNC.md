@@ -61,17 +61,23 @@ Devices pair once and then push and pull events. All bodies are JSON (DTOs in
 | Call | Auth | Body / query | Result |
 |---|---|---|---|
 | `POST /v1/pair` | one-time code | `{code, deviceId, deviceName}` | `{token, serverName, userId}` — the device token (only its hash is stored). |
-| `POST /v1/events` | `Bearer <device token>` | `{events: [...]}` (≤ 1,000) | `{accepted, duplicates, rejected: [{id, reason}], cursor}` |
+| `POST /v1/events` | `Bearer <device token>` | `{events: [...]}` (≤ 1,000, ≤ 4 MB) | `{accepted, duplicates, rejected: [{id, reason}], cursor}` |
 | `GET /v1/events?after=<cursor>&limit=<n>` | `Bearer <device token>` | — | `{events: [{cursor, event}], cursor, hasMore}` (≤ 500 per page) |
 
 - **Pairing:** the server page (admin password) shows an 8-character code
   and a QR code (`dwquest://pair?server=…&code=…`), valid for 10 minutes and
   single-use. 10 attempts per 10 minutes per IP.
 - **Push** is idempotent by event id. The server refuses events whose envelope
-  is malformed, whose `deviceId` isn't the pushing device, that aren't user
-  events (only the server writes `mcp:` events), or that are more than 24h
-  ahead of the server clock (D-112). Refusals are per event; the rest are
-  stored.
+  is malformed, that aren't user events (only the server writes `mcp:`
+  events), that are more than 24h ahead of the server clock (D-112), or whose
+  `deviceId` is the server's own or that of *another* active (paired, not
+  removed) device — no live device can take over another's sequence numbers.
+  Events of the pushing device, of removed devices and of devices never paired
+  are accepted, so a snapshot imported from a dead phone still reaches the
+  server (D-504). Refusals are per event; the rest are stored.
+- The push response's `cursor` is the server's latest cursor. Clients use it
+  only to detect a reset server (it is lower than the cursor they pulled to),
+  never as a pull cursor.
 - **Pull** pages through the server's arrival order (`cursor` is a server
   sequence, not a timestamp), so a device never misses an event that arrives
   late with an old `ts`. The device folds in canonical order regardless.
