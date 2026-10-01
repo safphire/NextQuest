@@ -3,6 +3,7 @@ package dev.dreamweave.quest.presence
 
 import android.app.AlarmManager
 import android.content.Intent
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.dreamweave.quest.QuestApp
@@ -10,10 +11,12 @@ import dev.dreamweave.quest.core.Fold
 import dev.dreamweave.quest.data.AppSettings
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.TimeZone
+import androidx.test.uiautomator.UiDevice
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.test.assertNotEquals
 
 /**
@@ -29,7 +32,9 @@ class AlarmRebootTest {
 
     @Before
     fun grantExactAlarms() {
-        instrumentation.uiAutomation.executeShellCommand("appops set ${app.packageName} SCHEDULE_EXACT_ALARM allow").close()
+        // Synchronous (returns the command's output): the grant must be in place before arming.
+        UiDevice.getInstance(instrumentation).executeShellCommand("appops set ${app.packageName} SCHEDULE_EXACT_ALARM allow")
+        assertTrue(waitFor { Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms() }, "exact-alarm grant didn't take effect")
     }
 
     private fun waitFor(timeoutMs: Long = 10_000, check: () -> Boolean): Boolean {
@@ -42,7 +47,7 @@ class AlarmRebootTest {
     }
 
     @Test
-    fun stepAlarmIsReArmedAfterReboot() = runBlocking {
+    fun stepAlarmIsReArmedAfterReboot(): Unit = runBlocking {
         val c = app.container
         val due = (System.currentTimeMillis() / 60_000 + 7 * 24 * 60) * 60_000 // a week ahead, whole minute
         // A unique title, and the quest is dropped at the end: the test runs against the real app data.
@@ -52,11 +57,14 @@ class AlarmRebootTest {
         try {
             c.actions.setStep(q, "Ring", dueAt = due, alarm = true)
             c.presence.refresh()
-            assertEquals(true, waitFor { alarms.nextAlarmClock?.triggerTime?.let { it <= due } == true })
+            assertEquals(
+                true, waitFor { alarms.nextAlarmClock?.triggerTime?.let { it <= due } == true },
+                "alarm not armed (next alarm clock: ${alarms.nextAlarmClock?.triggerTime}, due $due)",
+            )
 
             // Wipe our alarms the way a reboot does (schedule an empty plan).
             c.scheduler.reschedule(Fold.of(emptyList(), TimeZone.UTC), AppSettings(digestEnabled = false, streakGuardEnabled = false))
-            assertNotEquals(due, alarms.nextAlarmClock?.triggerTime)
+            assertNotEquals(due, alarms.nextAlarmClock?.triggerTime, "alarm still armed after the wipe")
 
             SystemEventsReceiver().onReceive(app, Intent(Intent.ACTION_BOOT_COMPLETED))
             assertEquals(true, waitFor { alarms.nextAlarmClock?.triggerTime == due }, "alarm not re-armed after boot")
