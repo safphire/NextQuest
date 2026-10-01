@@ -58,11 +58,14 @@ The only stored truth is an append-only log of events:
 | `quest.reordered` | `questId, order` | |
 | `step.set` | `stepId, questId, text, dueAt?, alarm` | quest must be open; replaces (supersedes) the quest's current step. |
 | `step.edited` | `stepId, text?, dueAt?, clearDue, alarm?` | only the current step; rescheduling re-arms its reminder. |
-| `step.completed` | `stepId, via (app\|notification\|widget\|proposal), finishQuest, next?` | step not already done. +15 XP. |
+| `step.completed` | `stepId, via (app\|notification\|widget\|proposal), finishQuest, next?, local {at, day, minute}` | step not already done. +15 XP. `local` is the completing device's wall time and local day/minute, used for streaks (D-108). |
 | `step.snoozed` / `step.reminder_dismissed` | `stepId, until` / `stepId` | step not done. |
 | `settings.slot_cap_set` | `cap` | 3–7; not below the current number of tracked quests. |
 | `proposal.created` | `proposalId, source, client, op, payload, reason?` | **only** from `mcp:*` actors. |
 | `proposal.accepted` / `rejected` / `edited` | `proposalId` (+ `payload` for edited) | only from `user`; proposal must be pending. |
+
+Before the type-specific rules, every envelope is checked: UUIDv7 event and
+device ids, `seq` ≥ 1, `ts` > 0, no reused `(deviceId, seq)`.
 
 Unknown event types are skipped (and kept in the log), so an older app never
 breaks on a newer device's events.
@@ -73,8 +76,8 @@ After every single event:
 
 1. **Cap** — tracked top-level quests ≤ slot cap.
 2. **Next step** — every tracked quest has a visible next step, unless the
-   event that removed it was a `step.completed` with `via` notification or
-   widget (the quest then shows "Needs next step"). A quest already in that
+   event that removed it was a `step.completed` with `via: notification`
+   (the quest then shows "Needs next step"). A quest already in that
    state may be edited without being fixed, but nothing else can put it there.
 3. **Actors** — `mcp:*` actors can only create proposals. Proposals are inert
    data until a `user` event accepts them; acceptance produces ordinary user
@@ -114,10 +117,13 @@ previous (rounded):
 | 6 | 305 | 820 |
 | 10 | 745 | 2,579 |
 
-**Streak.** A day counts when at least one step is done (device time zone).
+**Streak.** A day counts when at least one step is done, on the completing
+device's local calendar (each completion carries its local day).
 Missing exactly one day is forgiven if a step is done before noon on the next
 day. Current and best are tracked; the incremental tracker and the
-from-scratch computation are tested against each other on random histories.
+from-scratch computation are tested against each other on random histories,
+and `Stats.recount` re-derives every lifetime counter from the entities to
+check the fold's incremental bookkeeping.
 
 **Achievements.** First step · 10 / 50 steps · first / 5 quests · 3 / 7-day
 streak · level 5 · 10 inbox items sorted · first subquest · 10 subquests done ·

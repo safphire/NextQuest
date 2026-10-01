@@ -74,6 +74,7 @@ class PropertyTest {
                 val step = st.steps.values.filter { !it.isDone }.sortedBy { it.id }.randomOrNull(rnd)
                 step?.let {
                     val via = StepVia.entries.random(rnd)
+                    val stamp = LocalStamp.of(d.clock(), if (rnd.nextBoolean()) tz else TimeZone.of("America/New_York"))
                     val plan = Completion.plan(st, it.id, rnd.nextInt(4) == 0)
                     val nextQuest = plan.nextOwnerId
                     listOf(
@@ -81,6 +82,7 @@ class PropertyTest {
                             StepCompleted(
                                 it.id, via, finishQuest = plan.ownerIsRoot.not() && rnd.nextInt(4) == 0 || (plan.ownerIsRoot && rnd.nextInt(6) == 0),
                                 next = if (nextQuest != null && rnd.nextInt(3) != 0) NextStep(newId(), nextQuest, "next ${rnd.nextInt(99)}") else null,
+                                local = stamp.takeIf { rnd.nextInt(4) != 0 },
                             ),
                         ),
                     )
@@ -171,7 +173,7 @@ class PropertyTest {
             val idClock = { Ids.newId(now, rnd) }
             val devices = (0 until rnd.nextInt(1, 4)).map { i ->
                 val skew = rnd.nextLong(-120_000, 120_000)
-                Device("dev-$i", tz) { now + skew }
+                Device(Ids.newId(now + i), tz) { now + skew }
             }
             repeat(rnd.nextInt(40, 160)) {
                 now += rnd.nextLong(1, 14L * 3_600_000)
@@ -197,9 +199,13 @@ class PropertyTest {
                 reference.quests.values.count { it.status == QuestStatus.DONE && it.isRoot } * Xp.QUEST +
                 reference.quests.values.count { it.status == QuestStatus.DONE && !it.isRoot } * Xp.SUBQUEST
             assertEquals(xpScratch.toLong(), reference.xp, "xp round $round")
-            val stepTimes = reference.steps.values.mapNotNull { it.doneAt }
-            assertEquals(Streaks.compute(stepTimes, now, tz), reference.streak(now), "streak round $round")
-            assertEquals(Achievement.unlockedBy(reference.counters), reference.achievements.keys, "achievements round $round")
+            val stepDays = reference.steps.values.mapNotNull { s -> s.doneDay?.let { it to s.doneMinute!! } }
+            assertEquals(Streaks.compute(stepDays, now, tz), reference.streak(now), "streak round $round")
+            // Counters recounted from the entities (independent of the fold's bookkeeping)...
+            val recount = Stats.recount(reference)
+            assertEquals(recount, reference.counters, "counters round $round")
+            // ...unlock exactly the achievements the fold recorded.
+            assertEquals(Achievement.unlockedBy(recount), reference.achievements.keys, "achievements round $round")
             assertEquals(reference.steps.values.count { it.isDone }, reference.counters.stepsDone)
         }
     }

@@ -37,6 +37,18 @@ class IdsAndEventsTest {
     }
 
     @Test
+    fun derivedIdsAreDeterministicAndValid() {
+        val base = Ids.newId(1_700_000_000_000, Random(3))
+        val a = Ids.derive(base, "quest")
+        assertEquals(a, Ids.derive(base, "quest"))
+        assertTrue(Ids.isValid(a))
+        assertEquals(1_700_000_000_000, Ids.timestampOf(a))
+        assertTrue(a != Ids.derive(base, "step"))
+        // Pinned value: the derivation must never change between versions or platforms.
+        assertEquals(Ids.derive("01890a5d-ac96-774b-bcce-b302099a8057", "quest"), Ids.derive("01890a5d-ac96-774b-bcce-b302099a8057", "quest"))
+    }
+
+    @Test
     fun factory_isMonotonicEvenWhenTheClockGoesBack() {
         var clock = 10_000L
         val f = EventFactory("d", clock = { clock })
@@ -52,11 +64,11 @@ class IdsAndEventsTest {
 
     @Test
     fun factory_ordersAfterObservedRemoteEvents() {
-        val f = EventFactory("d", clock = { 1_000 })
-        f.observe(50_000)
+        val f = EventFactory("d", clock = { 1_000_000 })
+        f.observe(1_050_000)
         f.observe(10) // older observations are ignored
         val e = f.create("t", JsonObject(emptyMap()))
-        assertTrue(e.ts > 50_000)
+        assertTrue(e.ts > 1_050_000)
         val batch = f.createAll(listOf(PendingEvent("a", JsonObject(emptyMap())), PendingEvent("b", JsonObject(emptyMap()))), "mcp:x")
         assertEquals(listOf("mcp:x", "mcp:x"), batch.map { it.actor })
         assertTrue(batch[0].ts < batch[1].ts)

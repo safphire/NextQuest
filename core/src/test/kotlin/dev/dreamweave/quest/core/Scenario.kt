@@ -10,7 +10,7 @@ import kotlin.test.fail
 class Scenario(
     val tz: TimeZone = TimeZone.UTC,
     start: String = "2026-01-05T09:00:00Z",
-    deviceId: String = "device-a",
+    deviceId: String = Ids.newId(),
 ) {
     var now: Long = Instant.parse(start).toEpochMilliseconds()
     val factory = EventFactory(deviceId, clock = { now })

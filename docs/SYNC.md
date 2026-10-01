@@ -31,7 +31,10 @@ replica and every shuffle of the log fold to the same state.
 ## Timestamps
 
 Each device stamps events with a hybrid clock: `ts = max(wall clock,
-last ts + 1)`, and receiving an event bumps the device's last ts. A device's
+last ts + 1)`, and receiving an event bumps the device's last ts — but never
+beyond its own wall clock + 5 minutes, so one device with a wrong clock can't
+drag the others into the future (D-112). Streaks never depend on `ts`: each
+completion carries the completing device's local day (D-108). A device's
 own events therefore stay in the order it wrote them, and a local edit always
 sorts after the remote events it was made on top of, even when clocks are
 skewed.
@@ -46,6 +49,7 @@ skewed.
 | A device completes a step another device already replaced | The completion still counts (no lost XP); the newer step stays current. |
 | One device lowers the cap while another tracks a quest | Whichever comes first wins; lowering the cap below the tracked count is skipped. |
 | A device edits a quest another device completed | Edits to title/why still apply; new steps on a finished quest are skipped. |
+| A device reuses a sequence number for a different event (e.g. a restored backup on a second phone) | The first event keeps the number; the other is skipped. Device ids are excluded from Android backup, so a restored install gets its own id. |
 | A user accepts the same proposal on two devices | Ids created by an acceptance are derived from the proposal id, so the second acceptance's events collide ("already exists" / "already done" / "already decided") and are skipped: nothing is created twice. If one device rejected and the other accepted, the first decision sets the proposal's status, and the accepting device's domain events still apply (the user did accept there). |
 
 Skipped events stay in the log (they are facts about what a device tried) and

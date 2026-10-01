@@ -127,4 +127,23 @@ class ViewsTest {
         assertFalse(Completion.plan(s.state, inboxStep, false).nextRequired)
         assertFailsWith<IllegalArgumentException> { Completion.plan(s.state, "missing", false) }
     }
+
+    @Test
+    fun leavePlan() {
+        val s = Scenario()
+        val root = s.tracked("Root", "r")
+        val a = s.sub(root, "A")
+        s.advanceMinutes(1)
+        val b = s.sub(root, "B")
+        assertEquals(Completion.LeavePlan(root, null, false), Completion.planLeave(s.state, root))
+        // Not focused: leaving changes nothing about the visible step.
+        assertEquals(Completion.LeavePlan(root, root, false), Completion.planLeave(s.state, a))
+        s.ok(Events.questFocusSet(QuestFocusSet(root, a, next = s.next(a, "a"))))
+        // Focused, next subquest has no step → required.
+        assertEquals(Completion.LeavePlan(root, b, true), Completion.planLeave(s.state, a))
+        s.step(b, "b")
+        assertEquals(Completion.LeavePlan(root, b, false), Completion.planLeave(s.state, a))
+        assertEquals(Completion.LeavePlan(root, a, false), Completion.planLeave(s.state, b))
+        assertFailsWith<IllegalArgumentException> { Completion.planLeave(s.state, "missing") }
+    }
 }

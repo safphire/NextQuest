@@ -3,7 +3,6 @@ package dev.dreamweave.quest.core
 
 import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.daysUntil
 import kotlinx.datetime.toLocalDateTime
@@ -59,82 +58,109 @@ object Levels {
 data class StreakInfo(val current: Int, val best: Int, val lastActiveDay: LocalDate?)
 
 /**
- * Streak rules: a day counts when at least one step is completed. Missing exactly one
- * day is forgiven when a step is completed before noon on the following day. Both the
- * incremental [StreakTracker] and the from-scratch [Streaks.compute] implement these
- * rules independently; tests check they always agree.
+ * Streak rules: a day counts when at least one step is completed (on the completing
+ * device's local calendar, see [LocalStamp]). Missing exactly one day is forgiven when the
+ * first step of the next active day is completed before noon. A chain is still "current"
+ * on its last day, the day after, and — while the grace window is open — until noon the
+ * day after that.
+ *
+ * [Streaks.compute] (from scratch) and [StreakTracker] (incremental) implement these rules
+ * separately; tests check they always agree.
  */
 object Streaks {
-    const val GRACE_DEADLINE_HOUR = 12
+    const val GRACE_DEADLINE_MINUTE = 12 * 60
 
-    /** Links two consecutive active days of a chain. */
-    internal fun links(previous: LocalDate, next: LocalDate, nextFirstStep: LocalDateTime): Boolean {
-        val gap = previous.daysUntil(next)
-        return gap == 1 || (gap == 2 && nextFirstStep.hour < GRACE_DEADLINE_HOUR)
-    }
-
-    /** Whether a chain whose last active day is [last] is still alive at [now]. */
-    internal fun alive(last: LocalDate, now: LocalDateTime): Boolean {
-        val gap = last.daysUntil(now.date)
-        return gap <= 1 || (gap == 2 && now.hour < GRACE_DEADLINE_HOUR)
-    }
-
-    /** From scratch: timestamps of every completed step, in any order. */
-    fun compute(stepTimestamps: Collection<Long>, nowMs: Long, tz: TimeZone): StreakInfo {
-        if (stepTimestamps.isEmpty()) return StreakInfo(0, 0, null)
-        val firstPerDay = stepTimestamps
-            .map { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) }
-            .groupBy { it.date }
-            .mapValues { (_, times) -> times.min() }
-            .toSortedMap()
+    /** From scratch: the (local day, minute of day) of every completed step, in any order. */
+    fun compute(steps: Collection<Pair<LocalDate, Int>>, today: LocalDate, nowMinute: Int): StreakInfo {
+        if (steps.isEmpty()) return StreakInfo(0, 0, null)
+        val firstMinuteOfDay = steps.groupBy({ it.first }, { it.second }).mapValues { it.value.min() }.toSortedMap()
         var best = 0
         var chain = 0
         var previous: LocalDate? = null
-        for ((day, firstStep) in firstPerDay) {
-            chain = if (previous != null && links(previous, day, firstStep)) chain + 1 else 1
-            best = maxOf(best, chain)
+        for ((day, firstMinute) in firstMinuteOfDay) {
+            val gap = previous?.daysUntil(day)
+            chain = when {
+                gap == 1 -> chain + 1
+                gap == 2 && firstMinute < GRACE_DEADLINE_MINUTE -> chain + 1
+                else -> 1
+            }
+            if (chain > best) best = chain
             previous = day
         }
+        val sinceLast = previous!!.daysUntil(today)
+        val alive = sinceLast <= 1 || (sinceLast == 2 && nowMinute < GRACE_DEADLINE_MINUTE)
+        return StreakInfo(if (alive) chain else 0, best, previous)
+    }
+
+    fun compute(steps: Collection<Pair<LocalDate, Int>>, nowMs: Long, tz: TimeZone): StreakInfo {
         val now = Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz)
-        val last = previous!!
-        val current = if (alive(last, now)) chain else 0
-        return StreakInfo(current, best, last)
+        return compute(steps, now.date, now.hour * 60 + now.minute)
     }
 }
 
-/** Incremental streak, fed with step completions in time order. */
-class StreakTracker(private val tz: TimeZone) {
-    private var lastDay: LocalDate? = null
+/**
+ * Incremental streak. Steps usually arrive in day order (append fast path); a step for an
+ * earlier day — e.g. synced late from another device — triggers a rescan of the days.
+ */
+class StreakTracker {
+    private val days = java.util.TreeMap<LocalDate, Int>()
     private var chain = 0
     var best = 0
         private set
 
-    fun copy(): StreakTracker = StreakTracker(tz).also {
-        it.lastDay = lastDay
+    fun copy(): StreakTracker = StreakTracker().also {
+        it.days.putAll(days)
         it.chain = chain
         it.best = best
     }
 
-    fun onStep(ts: Long) {
-        val at = Instant.fromEpochMilliseconds(ts).toLocalDateTime(tz)
-        val previous = lastDay
-        when {
-            previous == null -> chain = 1
-            at.date <= previous -> return // same day (or clock went back): nothing new
-            Streaks.links(previous, at.date, at) -> chain += 1
-            else -> chain = 1
+    fun onStep(day: LocalDate, minute: Int) {
+        val last = if (days.isEmpty()) null else days.lastKey()
+        val known = days[day]
+        if (known != null && known <= minute) return
+        days[day] = minOf(known ?: minute, minute)
+        if (last == null) {
+            chain = 1
+        } else if (day > last) {
+            val gap = last.daysUntil(day)
+            chain = if (gap == 1 || (gap == 2 && minute < Streaks.GRACE_DEADLINE_MINUTE)) chain + 1 else 1
+        } else {
+            rescan()
+            return
         }
-        lastDay = at.date
         best = maxOf(best, chain)
+    }
+
+    private fun rescan() {
+        chain = 0
+        best = 0
+        var prev: LocalDate? = null
+        for ((d, m) in days) {
+            chain = if (prev != null) {
+                val gap = prev.daysUntil(d)
+                if (gap == 1 || (gap == 2 && m < Streaks.GRACE_DEADLINE_MINUTE)) chain + 1 else 1
+            } else {
+                1
+            }
+            best = maxOf(best, chain)
+            prev = d
+        }
     }
 
     /** Length of the chain ending at the latest active day, regardless of whether it is still alive. */
     val chainLength: Int get() = chain
 
-    fun info(nowMs: Long): StreakInfo {
-        val last = lastDay ?: return StreakInfo(0, 0, null)
+    fun info(today: LocalDate, nowMinute: Int): StreakInfo {
+        if (days.isEmpty()) return StreakInfo(0, 0, null)
+        val last = days.lastKey()
+        val since = last.daysUntil(today)
+        val alive = since <= 1 || (since == 2 && nowMinute < Streaks.GRACE_DEADLINE_MINUTE)
+        return StreakInfo(if (alive) chain else 0, best, last)
+    }
+
+    fun info(nowMs: Long, tz: TimeZone): StreakInfo {
         val now = Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz)
-        return StreakInfo(if (Streaks.alive(last, now)) chain else 0, best, last)
+        return info(now.date, now.hour * 60 + now.minute)
     }
 }
 
@@ -168,5 +194,32 @@ enum class Achievement(val title: String, val description: String, val isUnlocke
     companion object {
         /** From scratch: every achievement the counters qualify for. */
         fun unlockedBy(counters: Counters): Set<Achievement> = entries.filter { it.isUnlocked(counters) }.toSet()
+    }
+}
+
+/**
+ * Recounts the lifetime counters from the entities in a state — independently of the
+ * incremental bookkeeping in the fold. Tests check `recount(state) == state.counters`.
+ */
+object Stats {
+    fun recount(state: QuestState): Counters {
+        val quests = state.quests.values
+        val doneSteps = state.steps.values.filter { it.isDone }
+        val streak = Streaks.compute(
+            doneSteps.mapNotNull { s -> s.doneDay?.let { d -> d to (s.doneMinute ?: 0) } },
+            LocalDate(1970, 1, 1), 0,
+        )
+        return Counters(
+            stepsDone = doneSteps.size,
+            questsDone = quests.count { it.isRoot && it.status == QuestStatus.DONE },
+            subquestsDone = quests.count { !it.isRoot && it.status == QuestStatus.DONE },
+            inboxSorted = quests.count { it.isRoot && it.leftInboxAt != null },
+            subquestsCreated = quests.count { !it.isRoot },
+            proposalsAccepted = state.proposals.values.count { it.status == ProposalStatus.ACCEPTED || it.status == ProposalStatus.EDITED },
+            bestStreak = streak.best,
+            xp = doneSteps.size.toLong() * Xp.STEP +
+                quests.count { it.isRoot && it.status == QuestStatus.DONE } * Xp.QUEST +
+                quests.count { !it.isRoot && it.status == QuestStatus.DONE } * Xp.SUBQUEST,
+        )
     }
 }

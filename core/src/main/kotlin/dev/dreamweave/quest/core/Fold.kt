@@ -2,6 +2,7 @@
 package dev.dreamweave.quest.core
 
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 /** One line of human-readable history, derived from an accepted event. */
 data class HistoryEntry(
@@ -43,11 +44,13 @@ class QuestState internal constructor(
     val lastUserActivityAt: Long?,
     val appliedCount: Int,
     private val streakTracker: StreakTracker,
+    /** The time zone this replica uses for "today" (streak liveness, calendar). */
+    val timeZone: TimeZone,
 ) {
     val xp: Long get() = counters.xp
     val level: LevelInfo get() = Levels.infoFor(counters.xp)
 
-    fun streak(nowMs: Long): StreakInfo = streakTracker.info(nowMs)
+    fun streak(nowMs: Long): StreakInfo = streakTracker.info(nowMs, timeZone)
 
     /** Tracked root quests, in the order they were tracked. */
     val tracked: List<Quest> by lazy {
@@ -88,7 +91,7 @@ class QuestState internal constructor(
         history.filter { it.rootId == rootId }.takeLast(limit)
 
     val pendingProposals: List<Proposal> by lazy {
-        proposals.values.filter { it.status == ProposalStatus.PENDING }.sortedBy { it.createdAt }
+        proposals.values.filter { it.status == ProposalStatus.PENDING }.sortedWith(compareBy<Proposal>({ it.createdAt }, { it.id }))
     }
 
     internal companion object {
@@ -128,13 +131,15 @@ class Folder(val tz: TimeZone) {
     private val appliedIds = HashSet<String>()
     /** Every event id ever offered (applied or skipped): a re-delivered event is a duplicate, never re-judged. */
     private val seenIds = HashSet<String>()
+    /** (deviceId, seq) pairs in use: a device never writes two events with one sequence number. */
+    private val deviceSeqs = HashSet<String>()
     private val stepless = HashSet<String>()
     private var cap = Limits.DEFAULT_CAP
     private var counters = Counters()
     private val achievements = LinkedHashMap<Achievement, Long>()
     private val history = ArrayList<HistoryEntry>()
     private val skipped = ArrayList<SkippedEvent>()
-    private var streak = StreakTracker(tz)
+    private var streak = StreakTracker()
     private var lastUserActivityAt: Long? = null
     private var lastApplied: Event? = null
 
@@ -152,6 +157,7 @@ class Folder(val tz: TimeZone) {
         f.proposals.putAll(proposals)
         f.appliedIds.addAll(appliedIds)
         f.seenIds.addAll(seenIds)
+        f.deviceSeqs.addAll(deviceSeqs)
         f.stepless.addAll(stepless)
         f.cap = cap
         f.counters = counters
@@ -175,12 +181,15 @@ class Folder(val tz: TimeZone) {
         lastUserActivityAt = lastUserActivityAt,
         appliedCount = appliedIds.size,
         streakTracker = streak.copy(),
+        timeZone = tz,
     )
 
     fun apply(event: Event): Outcome {
         if (!seenIds.add(event.id)) return Outcome.Skipped("duplicate event") // idempotent; not recorded
         val tx = Tx(event)
         val reason = try {
+            checkEnvelope(event)
+            deviceSeqs += "${event.deviceId}#${event.seq}" // reserved even if the event is skipped below
             checkActor(event)
             when (event.type) {
                 EventTypes.QUEST_CREATED -> tx.questCreated(decode(event, QuestCreated.serializer()))
@@ -222,6 +231,14 @@ class Folder(val tz: TimeZone) {
     private fun <T> decode(event: Event, serializer: kotlinx.serialization.KSerializer<T>): T =
         Events.decode(serializer, event.payload) ?: throw Reject("malformed payload")
 
+    private fun checkEnvelope(event: Event) {
+        if (!Ids.isValid(event.id)) throw Reject("event id is not a UUIDv7")
+        if (!Ids.isValid(event.deviceId)) throw Reject("device id is not a UUIDv7")
+        if (event.seq < 1) throw Reject("sequence number must be positive")
+        if (event.ts <= 0) throw Reject("timestamp must be positive")
+        if ("${event.deviceId}#${event.seq}" in deviceSeqs) throw Reject("sequence number reused by another event")
+    }
+
     private fun checkActor(event: Event) {
         val isUser = Actors.isUser(event.actor)
         val isMcp = Actors.isMcp(event.actor)
@@ -245,7 +262,7 @@ class Folder(val tz: TimeZone) {
         private var allowFlagFor: String? = null
         private var xp = 0
         private var c = counters
-        private var stepCompleted = false
+        private var completedDay: Pair<kotlinx.datetime.LocalDate, Int>? = null
         private val lines = ArrayList<HistoryEntry>()
 
         // ---- primitives -------------------------------------------------------------
@@ -403,10 +420,15 @@ class Folder(val tz: TimeZone) {
             if (p.status == QuestStatus.TRACKED && trackedCount() >= cap) {
                 throw Reject("all $cap slots are full")
             }
-            if (q.status == QuestStatus.INBOX && p.status != QuestStatus.INBOX) {
-                c = c.copy(inboxSorted = c.inboxSorted + 1)
-            }
-            put(q.copy(status = p.status, trackedAt = if (p.status == QuestStatus.TRACKED) ts else q.trackedAt))
+            val sortsInbox = q.isRoot && q.status == QuestStatus.INBOX && q.leftInboxAt == null
+            if (sortsInbox) c = c.copy(inboxSorted = c.inboxSorted + 1)
+            put(
+                q.copy(
+                    status = p.status,
+                    trackedAt = if (p.status == QuestStatus.TRACKED) ts else q.trackedAt,
+                    leftInboxAt = if (sortsInbox) ts else q.leftInboxAt,
+                ),
+            )
             touch(p.questId)
             if (!q.isRoot && p.status == QuestStatus.DROPPED) advanceFocusFrom(q.parentId!!, q)
             line(
@@ -469,13 +491,20 @@ class Folder(val tz: TimeZone) {
         fun stepCompleted(p: StepCompleted) {
             val s = step(p.stepId)
             if (s.isDone) throw Reject("step already done")
-            put(s.copy(doneAt = ts, doneVia = p.via))
+            val stamp = p.local?.let { l ->
+                val day = runCatching { kotlinx.datetime.LocalDate.parse(l.day) }.getOrNull()
+                if (day == null || l.minute !in 0 until 24 * 60 || l.at <= 0) null else Triple(l.at, day, l.minute)
+            } ?: run {
+                val dt = kotlinx.datetime.Instant.fromEpochMilliseconds(ts).toLocalDateTime(tz)
+                Triple(ts, dt.date, dt.hour * 60 + dt.minute)
+            }
+            put(s.copy(doneAt = stamp.first, doneVia = p.via, doneDay = stamp.second, doneMinute = stamp.third))
+            completedDay = stamp.second to stamp.third
             val q = quest(s.questId)
             if (q.openStepId == s.id) put(q.copy(openStepId = null))
             touch(s.questId)
             xp += Xp.STEP
             c = c.copy(stepsDone = c.stepsDone + 1)
-            stepCompleted = true
             line(s.questId, "Done: ${s.text}", Xp.STEP)
             if (p.finishQuest) completeQuest(s.questId)
             if (p.via.mayLeaveQuestWithoutStep) allowFlagFor = QuestState.rootOf(quests, s.questId)
@@ -507,6 +536,7 @@ class Folder(val tz: TimeZone) {
         fun proposalCreated(p: ProposalCreated) {
             newId(p.proposalId, proposals, "proposal")
             if (p.op.isBlank()) throw Reject("proposal op is empty")
+            if (Actors.mcpClient(event.actor) != p.client) throw Reject("proposal client does not match the actor")
             put(
                 Proposal(
                     id = p.proposalId, source = p.source, client = p.client, createdAt = ts,
@@ -563,7 +593,7 @@ class Folder(val tz: TimeZone) {
             }
             appliedIds += event.id
             c = c.copy(xp = c.xp + xp)
-            if (stepCompleted) streak.onStep(ts)
+            completedDay?.let { (day, minute) -> streak.onStep(day, minute) }
             c = c.copy(bestStreak = streak.best)
             counters = c
             for (a in Achievement.entries) {

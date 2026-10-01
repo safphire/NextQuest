@@ -176,7 +176,7 @@ class ProposalTest {
         val missing = Ids.newId()
 
         assertContains(ProposalRules.validate(s.state, "delete_everything", JsonObject(emptyMap())).single(), "unknown operation")
-        assertContains(ProposalRules.validate(s.state, "add_quest", JsonObject(emptyMap())).single(), "malformed")
+        assertContains(ProposalRules.validate(s.state, "add_quest", JsonObject(emptyMap())).single(), "expected fields title, why?, nextStep?, dueAt?, track?")
         assertContains(errors(s, ProposalOp.ADD_QUEST, AddQuestPayload(" ")).single(), "title must not be empty")
         assertContains(errors(s, ProposalOp.ADD_QUEST, AddQuestPayload("x".repeat(600))).single(), "longer than")
         assertContains(errors(s, ProposalOp.SET_NEXT_STEP, SetNextStepPayload(missing, "x")).single(), "does not exist")
@@ -192,6 +192,42 @@ class ProposalTest {
         s.ok(Events.questStatusSet(QuestStatusSet(q, QuestStatus.LATER)))
         assertContains(errors(s, ProposalOp.PARK_QUEST, ParkQuestPayload(q)).single(), "already parked")
         assertTrue(errors(s, ProposalOp.ADD_QUEST, AddQuestPayload("fine", nextStep = "ok", track = true)).isEmpty())
+    }
+
+    @Test
+    fun duplicateParkProposalsDoNotFreeTwoSlots() {
+        val s = Scenario()
+        repeat(5) { s.tracked("T$it") }
+        val victim = s.state.tracked.first().id
+        s.proposal(ProposalOp.PARK_QUEST, ParkQuestPayload(victim))
+        assertContains(errors(s, ProposalOp.PARK_QUEST, ParkQuestPayload(victim)).single(), "already waiting")
+        // Even if a second one slipped in (an older server), it frees the slot only once.
+        s.proposal(ProposalOp.PARK_QUEST, ParkQuestPayload(victim))
+        assertEquals(1, ProposalRules.availableSlotsForNewTracks(s.state))
+    }
+
+    @Test
+    fun setNextStep_onAQuestWhoseStepBelongsToAFocusedSubquest_pointsTheModelThere() {
+        val s = Scenario()
+        val root = s.tracked("Root", "r")
+        val child = s.sub(root, "Child")
+        s.ok(Events.questFocusSet(QuestFocusSet(root, child, next = s.next(child, "c"))))
+        assertContains(errors(s, ProposalOp.SET_NEXT_STEP, SetNextStepPayload(root, "x")).single(), child)
+        assertTrue(errors(s, ProposalOp.SET_NEXT_STEP, SetNextStepPayload(child, "x")).isEmpty())
+        // A stale one already stored is refused at accept time with the same explanation.
+        val id = s.proposal(ProposalOp.SET_NEXT_STEP, SetNextStepPayload(child, "x"))
+        s.ok(Events.questFocusSet(QuestFocusSet(root, null)))
+        s.decide(id, Decision.Accept())
+        assertEquals("x", s.state.openStep(child)!!.text)
+    }
+
+    @Test
+    fun theClientNameMustMatchTheActor() {
+        val s = Scenario()
+        val created = Events.proposalCreated(
+            ProposalCreated(Ids.newId(), ProposalSource.CLAUDE, "Claude", "add_quest", ProposalOps.encode(AddQuestPayload("x"))),
+        )
+        assertContains(s.rejected(created, actor = Actors.mcp("SomeoneElse")), "does not match")
     }
 
     @Test
@@ -226,7 +262,8 @@ class ProposalTest {
 
     @Test
     fun acceptingTheSameProposalOnTwoDevices_createsNothingTwice() {
-        val base = Scenario(deviceId = "phone")
+        val phoneId = Ids.newId()
+        val base = Scenario(deviceId = phoneId)
         val q = base.tracked("Q", "step")
         val add = base.proposal(ProposalOp.ADD_QUEST, AddQuestPayload("From AI", nextStep = "go"))
         val sub = base.proposal(ProposalOp.ADD_SUBQUEST, AddSubquestPayload(q, "Part", nextStep = "p"))
@@ -234,8 +271,8 @@ class ProposalTest {
         val shared = base.log.toList()
         val state = base.state
 
-        val phone = EventFactory("phone", lastSeq = base.factory.currentSeq, lastTs = base.factory.currentTs, clock = { base.now + 1_000 })
-        val tablet = EventFactory("tablet", lastTs = base.factory.currentTs, clock = { base.now + 5_000 })
+        val phone = EventFactory(phoneId, lastSeq = base.factory.currentSeq, lastTs = base.factory.currentTs, clock = { base.now + 1_000 })
+        val tablet = EventFactory(Ids.newId(), lastTs = base.factory.currentTs, clock = { base.now + 5_000 })
         val fromPhone = listOf(add, sub, set).flatMap { phone.createAll(ProposalRules.decide(state, it, Decision.Accept())) }
         val fromTablet = listOf(add, sub, set).flatMap {
             tablet.createAll(ProposalRules.decide(state, it, if (it == set) Decision.Accept(edited = ProposalOps.encode(SetNextStepPayload(q, "edited"))) else Decision.Accept()))

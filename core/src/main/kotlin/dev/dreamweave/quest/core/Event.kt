@@ -81,8 +81,18 @@ class EventFactory(
     val currentSeq: Long get() = lastSeq
     val currentTs: Long get() = lastTs
 
+    /**
+     * Notes a remote event's timestamp. Timestamps more than [MAX_FUTURE_SKEW_MS] ahead of
+     * this device's clock are only honored up to that limit, so one device with a wrong
+     * clock can't drag every other device's timestamps into the future.
+     */
     fun observe(ts: Long) {
-        if (ts > lastTs) lastTs = ts
+        val bounded = minOf(ts, clock() + MAX_FUTURE_SKEW_MS)
+        if (bounded > lastTs) lastTs = bounded
+    }
+
+    companion object {
+        const val MAX_FUTURE_SKEW_MS = 5 * 60 * 1000L
     }
 
     fun create(type: String, payload: JsonObject, actor: String = Actors.USER): Event {

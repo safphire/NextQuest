@@ -5,6 +5,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * A new current step, attached to events that would otherwise leave a tracked quest
@@ -70,6 +71,21 @@ data class StepEdited(
     val alarm: Boolean? = null,
 )
 
+/**
+ * When and on which local day a step was completed, as seen by the completing device.
+ * Streaks count these local days, so they don't depend on event timestamps (which follow
+ * the hybrid clock) or on the time zone of whichever replica folds the log.
+ */
+@Serializable
+data class LocalStamp(val at: Long, val day: String, val minute: Int) {
+    companion object {
+        fun of(nowMs: Long, tz: kotlinx.datetime.TimeZone): LocalStamp {
+            val dt = kotlinx.datetime.Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz)
+            return LocalStamp(nowMs, dt.date.toString(), dt.hour * 60 + dt.minute)
+        }
+    }
+}
+
 @Serializable
 data class StepCompleted(
     val stepId: String,
@@ -77,6 +93,7 @@ data class StepCompleted(
     /** Also complete the quest (or subquest) the step belongs to. */
     val finishQuest: Boolean = false,
     val next: NextStep? = null,
+    val local: LocalStamp? = null,
 )
 
 @Serializable

@@ -21,8 +21,11 @@ enum class StepVia {
     @SerialName("widget") WIDGET,
     @SerialName("proposal") PROPOSAL;
 
-    /** Completed somewhere the "What's next?" sheet could not be shown. */
-    val mayLeaveQuestWithoutStep: Boolean get() = this == NOTIFICATION || this == WIDGET
+    /**
+     * Completed from a notification action, where no "What's next?" sheet can be shown —
+     * the only exception to principle 4. The widget opens the sheet in a dialog instead.
+     */
+    val mayLeaveQuestWithoutStep: Boolean get() = this == NOTIFICATION
 }
 
 data class Quest(
@@ -37,6 +40,8 @@ data class Quest(
     val touchedAt: Long,
     val trackedAt: Long? = null,
     val completedAt: Long? = null,
+    /** First time this quest left the inbox (counts once toward "inbox items sorted"). */
+    val leftInboxAt: Long? = null,
     /** The single current (open) step of this quest, if any. */
     val openStepId: String? = null,
 ) {
@@ -52,6 +57,9 @@ data class Step(
     val createdAt: Long,
     val doneAt: Long? = null,
     val doneVia: StepVia? = null,
+    /** The completing device's local calendar day and minute of day — what streaks count. */
+    val doneDay: kotlinx.datetime.LocalDate? = null,
+    val doneMinute: Int? = null,
     /** Replaced by a newer step before being completed. Kept for history; never shown as "next". */
     val superseded: Boolean = false,
     val snoozedUntil: Long? = null,

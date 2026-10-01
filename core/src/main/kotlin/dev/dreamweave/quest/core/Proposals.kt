@@ -70,6 +70,19 @@ object ProposalOps {
         else -> throw IllegalArgumentException("not a proposal payload: ${payload::class}")
     }
 
+    /** Field list for error messages, e.g. "questId, text, dueAt?". */
+    fun fieldsOf(op: ProposalOp): String {
+        val d = when (op) {
+            ProposalOp.ADD_QUEST -> AddQuestPayload.serializer().descriptor
+            ProposalOp.SET_NEXT_STEP -> SetNextStepPayload.serializer().descriptor
+            ProposalOp.COMPLETE_STEP -> CompleteStepPayload.serializer().descriptor
+            ProposalOp.ADD_SUBQUEST -> AddSubquestPayload.serializer().descriptor
+            ProposalOp.SCHEDULE_STEP -> ScheduleStepPayload.serializer().descriptor
+            ProposalOp.PARK_QUEST -> ParkQuestPayload.serializer().descriptor
+        }
+        return (0 until d.elementsCount).joinToString { i -> d.getElementName(i) + if (d.isElementOptional(i)) "?" else "" }
+    }
+
     private fun <T> enc(s: KSerializer<T>, v: T) = CoreJson.encodeToJsonElement(s, v).jsonObject
 
     /** Decodes a payload into its typed class, or null when malformed / unknown op. */
@@ -126,7 +139,8 @@ object ProposalRules {
      */
     fun validate(state: QuestState, op: String, payload: JsonObject): List<String> {
         val kind = ProposalOp.fromWire(op) ?: return listOf("unknown operation '$op'")
-        val p = ProposalOps.decode(op, payload) ?: return listOf("malformed payload for $op")
+        val p = ProposalOps.decode(op, payload)
+            ?: return listOf("malformed payload for $op: expected fields ${ProposalOps.fieldsOf(kind)}")
         val errors = mutableListOf<String>()
         fun openQuest(id: String, what: String = "quest"): Quest? {
             val q = state.quests[id]
@@ -156,7 +170,12 @@ object ProposalRules {
             }
             ProposalOp.SET_NEXT_STEP -> {
                 p as SetNextStepPayload
-                openQuest(p.questId)
+                val q = openQuest(p.questId)
+                val focused = q?.focusedChildId?.let { state.quests[it] }?.takeIf { it.status.isOpen }
+                if (q != null && q.isRoot && focused != null) {
+                    errors += "the visible step of “${q.title}” belongs to its focused subquest “${focused.title}” " +
+                        "(${focused.id}); propose set_next_step for that subquest instead"
+                }
                 checkText(p.text, "text", Limits.MAX_TEXT)
             }
             ProposalOp.COMPLETE_STEP -> {
@@ -189,6 +208,10 @@ object ProposalRules {
                 val q = openQuest(p.questId)
                 if (q != null && !q.isRoot) errors += "only top-level quests can be parked"
                 if (q != null && q.status == QuestStatus.LATER) errors += "quest is already parked"
+                val alreadyPending = state.pendingProposals.any { pp ->
+                    pp.op == ProposalOp.PARK_QUEST.wire && (ProposalOps.decode(pp.op, pp.payload) as? ParkQuestPayload)?.questId == p.questId
+                }
+                if (q != null && alreadyPending) errors += "a park proposal for this quest is already waiting for the user"
             }
         }
         return errors
@@ -202,11 +225,11 @@ object ProposalRules {
      */
     fun availableSlotsForNewTracks(state: QuestState): Int {
         val pending = state.pendingProposals
-        val parks = pending.count { p ->
-            p.op == ProposalOp.PARK_QUEST.wire &&
-                (ProposalOps.decode(p.op, p.payload) as? ParkQuestPayload)
-                    ?.let { state.quests[it.questId]?.status == QuestStatus.TRACKED } == true
-        }
+        val parks = pending.mapNotNull { p ->
+            if (p.op != ProposalOp.PARK_QUEST.wire) return@mapNotNull null
+            (ProposalOps.decode(p.op, p.payload) as? ParkQuestPayload)?.questId
+                ?.takeIf { state.quests[it]?.status == QuestStatus.TRACKED }
+        }.distinct().size
         val claims = pending.count { p ->
             p.op == ProposalOp.ADD_QUEST.wire && (ProposalOps.decode(p.op, p.payload) as? AddQuestPayload)?.track == true
         }
@@ -232,7 +255,7 @@ object ProposalRules {
                 stale = problems.firstOrNull { "slots are full" !in it },
             )
             is SetNextStepPayload -> ProposalPreview(
-                label, title(p.questId), state.effectiveStepFor(p.questId)?.text ?: "(no next step)", p.text.trim(), stale = stale,
+                label, title(p.questId), state.openStep(p.questId)?.text ?: "(no next step)", p.text.trim(), stale = stale,
             )
             is CompleteStepPayload -> ProposalPreview(
                 label, title(p.questId), state.steps[p.stepId]?.text ?: "(missing step)", "Done ✓", stale = stale,
@@ -255,9 +278,6 @@ object ProposalRules {
         }
     }
 
-    private fun QuestState.effectiveStepFor(questId: String): Step? =
-        if (quests[questId]?.isRoot == true) effectiveStep(questId) else openStep(questId)
-
     private fun formatTs(ms: Long): String =
         kotlinx.datetime.Instant.fromEpochMilliseconds(ms).toString().replace("T", " ").take(16) + " UTC"
 
@@ -272,13 +292,18 @@ object ProposalRules {
      *
      * @throws ProposalException when the decision cannot be applied (the message says why).
      */
-    fun decide(state: QuestState, proposalId: String, decision: Decision): List<PendingEvent> {
+    fun decide(state: QuestState, proposalId: String, decision: Decision, local: LocalStamp? = null): List<PendingEvent> {
         val newIdFor = { role: String -> Ids.derive(proposalId, role) }
         val proposal = state.proposals[proposalId] ?: throw ProposalException("This proposal no longer exists.")
         if (proposal.status != ProposalStatus.PENDING) throw ProposalException("This proposal was already decided.")
         if (decision is Decision.Reject) return listOf(Events.proposalRejected(proposalId))
         decision as Decision.Accept
         val payloadJson = decision.edited ?: proposal.payload
+        // Re-check the soft rules at accept time. Full slots are handled by the swap
+        // dialog (parkQuestId); the fold enforces the hard cap either way.
+        validate(state, proposal.op, payloadJson)
+            .firstOrNull { "slots are full" !in it && "already waiting for the user" !in it && "needs a nextStep" !in it }
+            ?.let { throw ProposalException(it.replaceFirstChar { c -> c.uppercase() } + ".") }
         val p = ProposalOps.decode(proposal.op, payloadJson) ?: throw ProposalException("This proposal can't be read.")
         val out = mutableListOf<PendingEvent>()
         fun nextFor(questId: String, text: String?): NextStep? =
@@ -304,7 +329,7 @@ object ProposalRules {
                 val plan = Completion.plan(state, p.stepId, decision.finishQuest)
                 val next = plan.nextOwnerId?.let { nextFor(it, decision.nextStepText) }
                 if (plan.nextRequired && next == null) throw ProposalException(NEEDS_NEXT_STEP)
-                out += Events.stepCompleted(StepCompleted(p.stepId, StepVia.PROPOSAL, decision.finishQuest, next))
+                out += Events.stepCompleted(StepCompleted(p.stepId, StepVia.PROPOSAL, decision.finishQuest, next, local))
             }
             is AddSubquestPayload -> {
                 val childId = newIdFor("quest")

@@ -34,9 +34,17 @@ object Ids {
      * colliding events, and the fold keeps only the first (docs/SYNC.md).
      */
     fun derive(base: String, salt: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest("$base/$salt".toByteArray())
-        val seeded = Random(digest.fold(0L) { acc, b -> acc * 31 + b })
-        return newId(timestampOf(base), seeded)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest("$base/$salt".toByteArray(Charsets.UTF_8))
+        // The random part comes straight from the digest, so the id is identical on every
+        // platform and Kotlin version.
+        val fixed = object : Random() {
+            override fun nextBits(bitCount: Int): Int = throw UnsupportedOperationException()
+            override fun nextBytes(array: ByteArray, fromIndex: Int, toIndex: Int): ByteArray {
+                for (i in fromIndex until toIndex) array[i] = digest[(i - fromIndex) % digest.size]
+                return array
+            }
+        }
+        return newId(timestampOf(base), fixed)
     }
 
     private val PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")

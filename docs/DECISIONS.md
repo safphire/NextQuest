@@ -60,12 +60,12 @@ image and database names use the neutral `quest` / `dreamweave` naming.
 
 ## P1 — Core
 
-### D-101 · Widget Done may also leave "Needs next step"
-Principle 4 names only notification Done, but §5 requires tap-to-done on the
-home-screen widget, which cannot show the "What's next?" sheet either. Both
-use the same exception (`StepVia.NOTIFICATION` / `WIDGET`); the quest shows
-the dashed "Set step" card until the user sets one. App and proposal Done
-must always provide the next step (or finish the quest).
+### D-101 · Only notification Done may leave "Needs next step"
+Principle 4 is applied literally: the only exception is a step completed from
+a notification action (`StepVia.NOTIFICATION`). The widget's tap-to-done
+opens a small dialog-style "What's next?" activity over the home screen, so
+widget completions carry their next step like app completions. (An earlier
+draft also exempted the widget; the P1 review rejected that as unjustified.)
 
 ### D-102 · Atomic events carry the next step
 "Done → What's next?" is one `step.completed` event with an optional `next`
@@ -113,8 +113,13 @@ replica enforces the same cap. Lowering it below the number of tracked
 quests is refused ("park quests first").
 
 ### D-108 · Streak details
-A day counts when ≥1 step is completed, in the device's time zone (the
-server uses its `TZ` setting). A one-day gap is forgiven when the first step
+A day counts when ≥1 step is completed, on the **completing device's** local
+calendar: every `step.completed` carries a `local` stamp (wall-clock time,
+local date, minute of day). Streaks, achievements and "done at" use the
+stamp, so they don't change when the phone travels, when another replica (or
+the server) folds the log in a different time zone, or when a device with a
+wrong clock skews event timestamps. Events without a stamp (none are written
+by v1) fall back to the event timestamp in the folding replica's zone. A one-day gap is forgiven when the first step
 of the next active day is before 12:00. The displayed current streak stays
 alive through "today", "tomorrow", and the grace morning after a missed day,
 so nobody sees a zero before they had a chance to act (principle 6).
@@ -129,3 +134,25 @@ Dropped). "Quests" are top-level quests; subquests count separately.
 `propose_park_quest` for a tracked quest is pending and not already claimed by
 another tracking proposal. On accept, the user still chooses Track (with a
 swap dialog if needed) or To Inbox; the fold enforces the hard cap.
+
+### D-111 · Event envelopes are validated
+Before any rule, the fold checks the envelope: event id and device id are
+UUIDv7, `seq` ≥ 1, `ts` > 0, and a `(deviceId, seq)` pair is never reused by
+a different event. Malformed envelopes are skipped like any invalid event.
+A proposal's `client` must equal the `mcp:<client>` of its actor, so the
+source chip can't be spoofed.
+
+### D-112 · Bounded clock skew
+A device adopts a remote event's timestamp for its hybrid clock only up to
+5 minutes ahead of its own wall clock. A peer with a clock days ahead can't
+push everyone else's timestamps (and ordering) into the future; with D-108,
+it can't distort streaks either.
+
+### D-113 · Proposal rules re-checked at accept time
+`ProposalRules.decide` re-runs the proposal validation on the (possibly
+edited) payload, except for "slots are full" (the swap dialog handles it) and
+"needs a next step" (the sheet asks for it). `set_next_step` targets one
+quest's own step; on a quest whose visible step belongs to a focused
+subquest it is refused with a message naming the subquest. A second
+`park_quest` for the same quest is refused, and pending parks free each slot
+only once.

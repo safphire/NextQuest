@@ -99,15 +99,17 @@ class FoldTest {
 
     @Test
     fun cap_concurrentTracksFromTwoDevicesResolveDeterministically() {
-        val a = Scenario(deviceId = "phone")
+        val phoneId = Ids.newId()
+        val tabletId = Ids.newId()
+        val a = Scenario(deviceId = phoneId)
         repeat(4) { a.tracked("Shared$it") }
         val qa = a.capture("From phone"); a.step(qa, "a")
         val qb = a.capture("From tablet"); a.step(qb, "b")
         val shared = a.log.toList()
 
         // Both devices track a 5th quest while offline.
-        val phone = EventFactory("phone", lastSeq = a.factory.currentSeq, lastTs = a.factory.currentTs, clock = { a.now + 1_000 })
-        val tablet = EventFactory("tablet", lastTs = a.factory.currentTs, clock = { a.now + 2_000 })
+        val phone = EventFactory(phoneId, lastSeq = a.factory.currentSeq, lastTs = a.factory.currentTs, clock = { a.now + 1_000 })
+        val tablet = EventFactory(tabletId, lastTs = a.factory.currentTs, clock = { a.now + 2_000 })
         val e1 = phone.create(EventTypes.QUEST_STATUS_SET, Events.questStatusSet(QuestStatusSet(qa, QuestStatus.TRACKED)).payload)
         val e2 = tablet.create(EventTypes.QUEST_STATUS_SET, Events.questStatusSet(QuestStatusSet(qb, QuestStatus.TRACKED)).payload)
         val e3 = tablet.create(EventTypes.SLOT_CAP_SET, Events.slotCapSet(SlotCapSet(3)).payload)
@@ -149,7 +151,7 @@ class FoldTest {
 
     @Test
     fun notificationDone_flagsNeedsNextStep_untilTheUserSetsOne() {
-        for (via in listOf(StepVia.NOTIFICATION, StepVia.WIDGET)) {
+        for (via in listOf(StepVia.NOTIFICATION)) {
             val s = Scenario()
             val q = s.tracked("Q")
             s.done(s.stepOf(q), via = via)
@@ -164,6 +166,15 @@ class FoldTest {
             // The flag cannot be re-entered from the app.
             assertContains(s.rejected(Events.stepCompleted(StepCompleted(s.stepOf(q)))), "needs a next step")
         }
+    }
+
+    @Test
+    fun widgetDone_isNotAnException_itMustCarryTheNextStep() {
+        val s = Scenario()
+        val q = s.tracked("Q")
+        assertContains(s.rejected(Events.stepCompleted(StepCompleted(s.stepOf(q), StepVia.WIDGET))), "needs a next step")
+        s.done(s.stepOf(q), nextText = "from the widget dialog", via = StepVia.WIDGET)
+        assertFalse(s.state.needsNextStep(q))
     }
 
     @Test
@@ -341,23 +352,47 @@ class FoldTest {
     @Test
     fun malformedUnknownAndDuplicateEventsAreSkipped() {
         val f = Folder(kotlinx.datetime.TimeZone.UTC)
-        val bad = Event(Ids.newId(), "d", 1, 1, "user", EventTypes.STEP_SET, JsonObject(mapOf("x" to JsonPrimitive(1))))
+        val d = Ids.newId()
+        val bad = Event(Ids.newId(), d, 1, 1, "user", EventTypes.STEP_SET, JsonObject(mapOf("x" to JsonPrimitive(1))))
         assertEquals(Outcome.Skipped("malformed payload"), f.apply(bad))
-        val future = Event(Ids.newId(), "d", 2, 2, "user", "quest.teleported", JsonObject(emptyMap()))
+        val future = Event(Ids.newId(), d, 2, 2, "user", "quest.teleported", JsonObject(emptyMap()))
         assertIs<Outcome.Skipped>(f.apply(future))
         val good = Events.questCreated(QuestCreated(Ids.newId(), "ok"))
-        val e = Event(Ids.newId(), "d", 3, 3, "user", good.type, good.payload)
+        val e = Event(Ids.newId(), d, 3, 3, "user", good.type, good.payload)
         assertEquals(Outcome.Applied, f.apply(e))
         assertEquals(Outcome.Skipped("duplicate event"), f.apply(e))
         assertTrue(f.hasApplied(e.id))
         assertTrue(f.hasSeen(bad.id))
         assertFalse(f.hasApplied(bad.id))
         assertEquals(Outcome.Skipped("duplicate event"), f.apply(bad)) // a skipped event is never re-judged
+        // Envelope checks: ids are UUIDv7, seq and ts positive, (device, seq) never reused.
+        fun env(id: String = Ids.newId(), dev: String = d, seq: Long = 99, ts: Long = 99) =
+            f.apply(Event(id, dev, seq, ts, "user", good.type, Events.questCreated(QuestCreated(Ids.newId(), "x")).payload))
+        assertEquals(Outcome.Skipped("event id is not a UUIDv7"), env(id = "not-a-uuid"))
+        assertEquals(Outcome.Skipped("device id is not a UUIDv7"), env(dev = "device-a"))
+        assertEquals(Outcome.Skipped("sequence number must be positive"), env(seq = 0))
+        assertEquals(Outcome.Skipped("timestamp must be positive"), env(ts = -100))
+        assertEquals(Outcome.Skipped("sequence number reused by another event"), env(seq = 3))
         val snap = f.snapshot()
-        assertEquals(2, snap.skipped.size)
+        assertEquals(7, snap.skipped.size)
         assertEquals(1, snap.appliedCount)
-        assertTrue(f.isOutOfOrder(Event("z", "d", 0, 0, "user", "t", JsonObject(emptyMap()))))
-        assertFalse(f.isOutOfOrder(Event("z", "d", 9, 9, "user", "t", JsonObject(emptyMap()))))
+        assertTrue(f.isOutOfOrder(Event("z", d, 0, 0, "user", "t", JsonObject(emptyMap()))))
+        assertFalse(f.isOutOfOrder(Event("z", d, 999, 999, "user", "t", JsonObject(emptyMap()))))
+    }
+
+    @Test
+    fun inboxSorted_countsEachTopLevelQuestOnce() {
+        val s = Scenario()
+        val q = s.capture("Bouncy")
+        repeat(10) {
+            s.ok(Events.questStatusSet(QuestStatusSet(q, QuestStatus.LATER)))
+            s.ok(Events.questStatusSet(QuestStatusSet(q, QuestStatus.INBOX)))
+        }
+        val root = s.capture("Root")
+        val child = s.sub(root, "Child")
+        s.ok(Events.questStatusSet(QuestStatusSet(child, QuestStatus.DROPPED)))
+        assertEquals(1, s.state.counters.inboxSorted)
+        assertEquals(Stats.recount(s.state), s.state.counters)
     }
 
     @Test

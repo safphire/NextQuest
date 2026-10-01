@@ -7,11 +7,16 @@ import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
 
 class GameTest {
     private val utc = TimeZone.UTC
     private fun t(iso: String) = Instant.parse(iso).toEpochMilliseconds()
+
+    /** (local day, minute) pairs as a device in [tz] would stamp them. */
+    private fun local(times: List<Long>, tz: TimeZone = utc) = times.map {
+        val s = LocalStamp.of(it, tz)
+        kotlinx.datetime.LocalDate.parse(s.day) to s.minute
+    }
 
     @Test
     fun levelCurve_isGentleAndDocumented() {
@@ -39,31 +44,31 @@ class GameTest {
     @Test
     fun streak_consecutiveDays() {
         val steps = listOf("2026-03-01T10:00:00Z", "2026-03-02T23:00:00Z", "2026-03-03T08:00:00Z", "2026-03-03T09:00:00Z").map(::t)
-        val info = Streaks.compute(steps, t("2026-03-03T20:00:00Z"), utc)
+        val info = Streaks.compute(local(steps), t("2026-03-03T20:00:00Z"), utc)
         assertEquals(StreakInfo(3, 3, kotlinx.datetime.LocalDate(2026, 3, 3)), info)
         // Still alive the next day before any step, broken the day after.
-        assertEquals(3, Streaks.compute(steps, t("2026-03-04T22:00:00Z"), utc).current)
-        assertEquals(0, Streaks.compute(steps, t("2026-03-05T13:00:00Z"), utc).current)
-        assertEquals(3, Streaks.compute(steps, t("2026-03-05T13:00:00Z"), utc).best)
+        assertEquals(3, Streaks.compute(local(steps), t("2026-03-04T22:00:00Z"), utc).current)
+        assertEquals(0, Streaks.compute(local(steps), t("2026-03-05T13:00:00Z"), utc).current)
+        assertEquals(3, Streaks.compute(local(steps), t("2026-03-05T13:00:00Z"), utc).best)
     }
 
     @Test
     fun streak_graceForOneMissedDayIfStepBeforeNoon() {
         val missedOneThenMorning = listOf("2026-03-01T10:00:00Z", "2026-03-02T10:00:00Z", "2026-03-04T11:59:00Z").map(::t)
-        assertEquals(3, Streaks.compute(missedOneThenMorning, t("2026-03-04T15:00:00Z"), utc).current)
+        assertEquals(3, Streaks.compute(local(missedOneThenMorning), t("2026-03-04T15:00:00Z"), utc).current)
 
         val missedOneThenAfternoon = listOf("2026-03-01T10:00:00Z", "2026-03-02T10:00:00Z", "2026-03-04T12:00:00Z").map(::t)
-        val broken = Streaks.compute(missedOneThenAfternoon, t("2026-03-04T15:00:00Z"), utc)
+        val broken = Streaks.compute(local(missedOneThenAfternoon), t("2026-03-04T15:00:00Z"), utc)
         assertEquals(1, broken.current)
         assertEquals(2, broken.best)
 
         val missedTwo = listOf("2026-03-01T10:00:00Z", "2026-03-04T08:00:00Z").map(::t)
-        assertEquals(1, Streaks.compute(missedTwo, t("2026-03-04T09:00:00Z"), utc).current)
+        assertEquals(1, Streaks.compute(local(missedTwo), t("2026-03-04T09:00:00Z"), utc).current)
 
         // During the grace morning the streak is still shown as alive; after noon it is gone.
         val pending = listOf("2026-03-01T10:00:00Z", "2026-03-02T10:00:00Z").map(::t)
-        assertEquals(2, Streaks.compute(pending, t("2026-03-04T11:00:00Z"), utc).current)
-        assertEquals(0, Streaks.compute(pending, t("2026-03-04T12:30:00Z"), utc).current)
+        assertEquals(2, Streaks.compute(local(pending), t("2026-03-04T11:00:00Z"), utc).current)
+        assertEquals(0, Streaks.compute(local(pending), t("2026-03-04T12:30:00Z"), utc).current)
     }
 
     @Test
@@ -71,7 +76,7 @@ class GameTest {
         val tokyo = TimeZone.of("Asia/Tokyo")
         // 23:30 UTC on Mar 1 is 08:30 Mar 2 in Tokyo; 23:30 UTC Mar 2 is 08:30 Mar 3.
         val steps = listOf("2026-03-01T23:30:00Z", "2026-03-02T23:30:00Z").map(::t)
-        assertEquals(2, Streaks.compute(steps, t("2026-03-03T00:00:00Z"), tokyo).current)
+        assertEquals(2, Streaks.compute(local(steps, tokyo), t("2026-03-03T00:00:00Z"), tokyo).current)
         assertEquals(StreakInfo(0, 0, null), Streaks.compute(emptyList(), 0, utc))
     }
 
@@ -86,23 +91,71 @@ class GameTest {
                 time += rnd.nextLong(0, 60L * 60 * 60 * 1000) // up to 60h later
                 steps += time
             }
-            val tracker = StreakTracker(utc)
-            steps.forEach(tracker::onStep)
+            // Arrival order is shuffled sometimes, like steps synced late from another device.
+            val arrival = if (rnd.nextBoolean()) local(steps) else local(steps).shuffled(rnd)
+            val tracker = StreakTracker()
+            arrival.forEach { (d, m) -> tracker.onStep(d, m) }
             val now = time + rnd.nextLong(0, 72L * 3_600_000)
-            assertEquals(Streaks.compute(steps, now, utc), tracker.info(now), "round $round")
+            assertEquals(Streaks.compute(local(steps), now, utc), tracker.info(now, utc), "round $round")
             assertEquals(tracker.best, tracker.copy().best)
         }
-        val empty = StreakTracker(utc)
-        assertEquals(StreakInfo(0, 0, null), empty.info(0))
+        val empty = StreakTracker()
+        assertEquals(StreakInfo(0, 0, null), empty.info(0, utc))
         assertEquals(0, empty.chainLength)
     }
 
     @Test
     fun streakTracker_ignoresOlderTimestamps() {
-        val tr = StreakTracker(utc)
-        tr.onStep(t("2026-03-02T10:00:00Z"))
-        tr.onStep(t("2026-03-01T10:00:00Z"))
-        assertEquals(1, tr.chainLength)
+        val tr = StreakTracker()
+        val (d2, m2) = local(listOf(t("2026-03-02T10:00:00Z"))).single()
+        val (d1, m1) = local(listOf(t("2026-03-01T10:00:00Z"))).single()
+        tr.onStep(d2, m2)
+        tr.onStep(d1, m1) // an earlier day arriving late joins the chain
+        assertEquals(2, tr.chainLength)
+        assertEquals(2, tr.best)
+        tr.onStep(d2, m2 + 5) // a later step on a known day changes nothing
+        assertEquals(2, tr.best)
+    }
+
+    @Test
+    fun streaksUseTheCompletingDevicesLocalDay_notTheFoldingReplicasZone() {
+        // In Los Angeles: a step on Mar 1 at 10:00, none on Mar 2, one on Mar 3 at 11:00 → grace applies, streak 2.
+        // The same instants in UTC are Mar 1 18:00 and Mar 3 19:00 → after noon, no grace, streak 1.
+        val la = TimeZone.of("America/Los_Angeles")
+        val s = Scenario(tz = la, start = "2026-03-01T18:00:00Z")
+        val q = s.tracked("Q")
+        s.ok(Events.stepCompleted(StepCompleted(s.stepOf(q), next = s.next(q, "n1"), local = LocalStamp.of(s.now, la))))
+        s.advanceHours(49)
+        s.ok(Events.stepCompleted(StepCompleted(s.stepOf(q), next = s.next(q, "n2"), local = LocalStamp.of(s.now, la))))
+        val inLa = Fold.of(s.log, la)
+        val inUtc = Fold.of(s.log, utc)
+        val inTokyo = Fold.of(s.log, TimeZone.of("Asia/Tokyo"))
+        assertEquals(2, inLa.counters.bestStreak)
+        assertEquals(inLa.counters, inUtc.counters)
+        assertEquals(inLa.counters, inTokyo.counters)
+        assertEquals(inLa.achievements, inTokyo.achievements)
+        assertEquals(kotlinx.datetime.LocalDate(2026, 3, 1), inUtc.steps.values.filter { it.isDone }.minOf { it.doneDay!! })
+        // Without stamps (older writers), the replica's zone decides — and UTC would say 1.
+        val unstamped = Scenario(tz = utc, start = "2026-03-01T18:00:00Z")
+        val q2 = unstamped.tracked("Q")
+        unstamped.done(unstamped.stepOf(q2), nextText = "n1")
+        unstamped.advanceHours(49)
+        unstamped.done(unstamped.stepOf(q2), nextText = "n2")
+        assertEquals(1, unstamped.state.counters.bestStreak)
+    }
+
+    @Test
+    fun aDeviceWithAFastClockDoesNotDragOthersIntoTheFuture() {
+        var clock = t("2026-03-01T09:00:00Z")
+        val f = EventFactory(Ids.newId(clock), clock = { clock })
+        f.observe(clock + 5L * 86_400_000) // a device 5 days ahead
+        val e = f.create("quest.created", kotlinx.serialization.json.JsonObject(emptyMap()))
+        assert(e.ts <= clock + EventFactory.MAX_FUTURE_SKEW_MS + 1) { "ts ${e.ts}" }
+        f.observe(Long.MAX_VALUE)
+        val e2 = f.create("quest.created", kotlinx.serialization.json.JsonObject(emptyMap()))
+        assert(e2.ts > e.ts)
+        clock += 86_400_000
+        assert(f.create("x", kotlinx.serialization.json.JsonObject(emptyMap())).ts == clock)
     }
 
     @Test
@@ -133,7 +186,7 @@ class GameTest {
         }
         s.ok(Events.questStatusSet(QuestStatusSet(q, QuestStatus.DROPPED)))
         assertEquals(last, s.state.xp)
-        assertNull(s.state.streak(s.now + 10L * 86_400_000).current.takeIf { it > 0 })
+        assertEquals(0, s.state.streak(s.now + 10L * 86_400_000).current)
         assertEquals(1, s.state.streak(s.now + 10L * 86_400_000).best)
     }
 }

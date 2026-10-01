@@ -51,4 +51,27 @@ object Completion {
             ownerIsRoot = owner.id == rootId,
         )
     }
+
+    data class LeavePlan(
+        val rootId: String,
+        /** Who owns the root's visible step afterwards; null when the root itself is leaving. */
+        val nextOwnerId: String?,
+        val nextRequired: Boolean,
+    )
+
+    /** Plans completing or dropping [questId] (a quest or a subquest) from the checklist or menu. */
+    fun planLeave(state: QuestState, questId: String): LeavePlan {
+        val q = state.quests[questId] ?: throw IllegalArgumentException("unknown quest $questId")
+        val rootId = state.rootOf(questId) ?: questId
+        if (rootId == questId) return LeavePlan(rootId, null, nextRequired = false)
+        val root = state.quests.getValue(rootId)
+        val focusedAfter = if (root.focusedChildId == questId) {
+            val open = state.children(rootId).filter { it.id != questId && it.status.isOpen }
+            (open.firstOrNull { it.order > q.order } ?: open.firstOrNull())?.id
+        } else {
+            root.focusedChildId?.takeIf { state.quests[it]?.status?.isOpen == true }
+        }
+        val owner = focusedAfter ?: rootId
+        return LeavePlan(rootId, owner, root.status == QuestStatus.TRACKED && state.quests[owner]?.openStepId == null)
+    }
 }
