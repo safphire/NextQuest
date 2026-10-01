@@ -62,6 +62,10 @@ jobs:
       - name: Check generated files are committed
         run: |
           ./gradlew :protocol:generateSchemas
+          # Room leaves an existing schema file alone when only its identity hash differs, so
+          # regenerate the newest one from scratch: the committed file must be Room's own export.
+          for d in data/schemas/*/; do rm "$d$(ls "$d" | sort -n | tail -1)"; done
+          ./gradlew :data:kspDebugKotlin --rerun
           if [ -n "$(git status --porcelain data/schemas schema)" ]; then
             echo "::error::Generated files are out of date — commit them:"
             git status --porcelain data/schemas schema
