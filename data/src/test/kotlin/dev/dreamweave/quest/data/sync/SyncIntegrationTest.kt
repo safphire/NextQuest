@@ -239,6 +239,29 @@ class SyncIntegrationTest {
         val revoked = phone.engine.sync()
         assertIs<SyncOutcome.Failed>(revoked)
         assertEquals(false, revoked.retry)
+        // …and forgets the dead pairing, so nothing keeps retrying in the background.
+        assertTrue(revoked.unpaired)
+        assertTrue(!phone.engine.isPaired)
+        assertNull(phone.settings.current().serverUrl)
+        assertTrue(phone.settings.current().lastSyncError!!.contains("Pair it again"))
+        assertIs<SyncOutcome.NotPaired>(phone.engine.sync())
+    }
+
+    @Test
+    fun restoredInstall_withSettingsButNoToken_isToldToPairAgain() = withServer { services, http ->
+        val phone = Phone(KtorSyncTransport(http))
+        assertNull(phone.engine.pair("http://localhost", services.pairingCode(), "Pixel"))
+        // Android restore brings the settings back but never the token (excluded from backup).
+        phone.tokens.token = null
+        assertEquals("http://localhost", phone.settings.current().serverUrl)
+        phone.engine.reconcile()
+        assertNull(phone.settings.current().serverUrl)
+        assertTrue(phone.settings.current().lastSyncError != null)
+        // Pairing again works and re-uploads the log.
+        phone.actions.capture("Written before the restore")
+        assertNull(phone.engine.pair("http://localhost", services.pairingCode(), "Pixel"))
+        assertEquals(0, phone.repo.unpushedCount())
+        assertTrue(services.store.state(services.config.userId).quests.values.any { it.title == "Written before the restore" })
     }
 
     @Test

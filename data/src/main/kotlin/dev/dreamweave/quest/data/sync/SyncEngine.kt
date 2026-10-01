@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest.data.sync
 
+import dev.dreamweave.quest.core.CoreJson
 import dev.dreamweave.quest.core.Envelope
+import dev.dreamweave.quest.core.Event
 import dev.dreamweave.quest.data.QuestRepository
 import dev.dreamweave.quest.data.SettingsStore
 import dev.dreamweave.quest.protocol.PairRequest
 import dev.dreamweave.quest.protocol.PushRequest
 import dev.dreamweave.quest.protocol.SyncApi
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 sealed interface SyncOutcome {
     data class Ok(val pushed: Int, val pulled: Int, val refused: List<String>) : SyncOutcome
     data object NotPaired : SyncOutcome
 
-    /** [retry]: worth trying again later (offline, server busy). False when the user must act. */
-    data class Failed(val message: String, val retry: Boolean) : SyncOutcome
+    /**
+     * [retry]: worth trying again later (offline, server busy). False when the user must act.
+     * [unpaired]: the server no longer knows this phone; the pairing was forgotten.
+     */
+    data class Failed(val message: String, val retry: Boolean, val unpaired: Boolean = false) : SyncOutcome
 }
 
 /**
@@ -37,7 +44,8 @@ class SyncEngine(
 
     /**
      * Exchanges a one-time code for a device token, then syncs. Null on success, otherwise
-     * a message for the user.
+     * a message for the user. Once the server answered, the local writes finish even if
+     * the caller is cancelled, so a used-up code never leaves a half-paired phone.
      */
     suspend fun pair(serverUrl: String, code: String, deviceName: String): String? = mutex.withLock {
         val server = normalize(serverUrl) ?: return@withLock "That doesn't look like a server address (it should start with https://)."
@@ -50,17 +58,32 @@ class SyncEngine(
         } catch (e: Exception) {
             return@withLock "Can't reach $server. Check the address and your connection."
         }
-        tokens.token = response.token
-        settings.update { it.copy(serverUrl = server, syncCursor = 0, lastSyncAt = null, lastSyncError = null) }
-        // A (new) server has none of this device's events yet.
-        repository.markAllUnpushed()
+        withContext(NonCancellable) {
+            tokens.token = response.token
+            settings.update { it.copy(serverUrl = server, syncCursor = 0, lastSyncAt = null, lastSyncError = null) }
+            // A (new) server has none of this device's events yet.
+            repository.markAllUnpushed()
+        }
         null
     }.also { if (it == null) sync() }
 
-    /** Forgets the server. Nothing local is deleted; pairing again re-uploads this device's events. */
-    suspend fun disconnect() = mutex.withLock {
+    /** Forgets the server. Nothing local is deleted; pairing again re-uploads the log. */
+    suspend fun disconnect() = mutex.withLock { forget(error = null) }
+
+    /**
+     * After an Android restore the settings (server address, cursor) come back but the
+     * token doesn't (it is excluded from backup), so the phone would look paired and never
+     * sync. Call at startup: it turns that state into an honest "pair again".
+     */
+    suspend fun reconcile() = mutex.withLock {
+        if (tokens.token == null && settings.current().serverUrl != null) {
+            forget(error = "This phone was restored or reset. Pair it with your server again.")
+        }
+    }
+
+    private suspend fun forget(error: String?) {
         tokens.token = null
-        settings.update { it.copy(serverUrl = null, syncCursor = 0, lastSyncAt = null, lastSyncError = null) }
+        settings.update { it.copy(serverUrl = null, syncCursor = 0, lastSyncAt = null, lastSyncError = error) }
     }
 
     suspend fun sync(): SyncOutcome = mutex.withLock {
@@ -71,50 +94,62 @@ class SyncEngine(
             round(server, token)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: SyncHttpException) {
-            when {
-                e.status == 401 -> SyncOutcome.Failed("This phone was removed from the server. Pair it again in Settings.", retry = false)
-                e.status == 429 || e.status >= 500 -> SyncOutcome.Failed(e.message ?: "The server is busy.", retry = true)
-                else -> SyncOutcome.Failed(e.message ?: "The server refused the request.", retry = false)
-            }
         } catch (e: Exception) {
-            SyncOutcome.Failed("Can't reach the server.", retry = true)
+            failure(e)
         }
-        when (outcome) {
-            is SyncOutcome.Ok -> settings.update {
-                it.copy(
-                    lastSyncAt = clock(),
-                    lastSyncError = outcome.refused.firstOrNull()?.let { r -> "${outcome.refused.size} change(s) refused by the server ($r)" },
-                )
+        withContext(NonCancellable) {
+            when {
+                outcome is SyncOutcome.Ok -> settings.update {
+                    it.copy(
+                        lastSyncAt = clock(),
+                        lastSyncError = outcome.refused.firstOrNull()?.let { r -> "${outcome.refused.size} change(s) refused by the server ($r)" },
+                    )
+                }
+                // Removed on the server: this token is dead for good. Forget it so nothing keeps retrying.
+                outcome is SyncOutcome.Failed && outcome.unpaired -> forget(outcome.message)
+                outcome is SyncOutcome.Failed -> settings.update { it.copy(lastSyncError = outcome.message) }
+                else -> Unit
             }
-            is SyncOutcome.Failed -> settings.update { it.copy(lastSyncError = outcome.message) }
-            SyncOutcome.NotPaired -> Unit
         }
         outcome
     }
 
-    private suspend fun round(server: String, token: String): SyncOutcome.Ok {
+    private fun failure(e: Exception): SyncOutcome.Failed = when {
+        e !is SyncHttpException -> SyncOutcome.Failed("Can't reach the server.", retry = true)
+        e.status == 401 -> SyncOutcome.Failed("This phone was removed from the server. Pair it again in Settings.", retry = false, unpaired = true)
+        e.status == 429 || e.status >= 500 -> SyncOutcome.Failed(e.message ?: "The server is busy.", retry = true)
+        else -> SyncOutcome.Failed(e.message ?: "The server refused the request.", retry = false)
+    }
+
+    private suspend fun round(server: String, token: String): SyncOutcome {
         var cursor = settings.current().syncCursor
 
-        // Push. A refusal is final (the event is marked done, so it never blocks the queue)
-        // except "dated in the future", which clears once the server's clock catches up.
-        // Only refusals of this device's own events are worth telling the user about.
+        // Push first, but a push that fails must not keep proposals from arriving: the pull
+        // still runs and the push failure is reported afterwards.
         var pushed = 0
         val refused = mutableListOf<String>()
-        var afterId = ""
-        while (true) {
-            val batch = repository.unpushed(afterId, SyncApi.MAX_PUSH)
-            if (batch.isEmpty()) break
-            val r = transport.push(server, token, PushRequest(batch))
-            val retryLater = r.rejected.filter { "future" in it.reason }.map { it.id }.toSet()
-            repository.markPushed(batch.map { it.id }.filter { it !in retryLater })
-            val byId = batch.associateBy { it.id }
-            pushed += batch.size - r.rejected.size
-            refused += r.rejected.filter { byId[it.id]?.deviceId == repository.deviceId }.map { it.reason }
-            // The server's log is behind our cursor: it was reset or replaced. Pull everything again.
-            if (r.cursor < cursor) cursor = 0
-            afterId = batch.last().id
-            if (batch.size < SyncApi.MAX_PUSH) break
+        val pushFailure = try {
+            // An empty push is a cheap probe of the server's latest cursor. If it is behind ours
+            // the server was reset or restored from an older backup: pull from the start and
+            // offer it the whole log again.
+            val latest = transport.push(server, token, PushRequest(emptyList())).cursor
+            if (latest < cursor) {
+                cursor = 0
+                settings.update { it.copy(syncCursor = 0) }
+                repository.markAllUnpushed()
+            }
+            // Edits made while a round runs are picked up by another pass (sync work is KEEP,
+            // so a running round is never cancelled by a newer request).
+            repeat(MAX_PUSH_PASSES) {
+                val n = pushAll(server, token, refused)
+                pushed += n
+                if (n == 0) return@repeat
+            }
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e
         }
 
         // Pull, page by page, saving the cursor after each page so progress survives interruptions.
@@ -135,11 +170,60 @@ class SyncEngine(
             settings.update { it.copy(syncCursor = cursor) }
             if (!r.hasMore) break
         }
-        if (cursor == 0L) settings.update { it.copy(syncCursor = 0) }
+        if (pushFailure != null) return failure(pushFailure)
         return SyncOutcome.Ok(pushed, pulled, refused)
     }
 
+    /**
+     * One pass over the queue. A refusal is final (the event is marked done, so it never
+     * blocks the queue) except "dated in the future" (the server's wording, see EventStore),
+     * which clears once the server's clock catches up. Batches stay under the server's
+     * body limit by size as well as count. Returns how many events the server stored.
+     */
+    private suspend fun pushAll(server: String, token: String, refused: MutableList<String>): Int {
+        var pushed = 0
+        var afterId = ""
+        while (true) {
+            val page = repository.unpushed(afterId, SyncApi.MAX_PUSH)
+            if (page.isEmpty()) break
+            for (batch in bySize(page)) {
+                val r = transport.push(server, token, PushRequest(batch))
+                val retryLater = r.rejected.filter { "future" in it.reason }.map { it.id }.toSet()
+                repository.markPushed(batch.map { it.id }.filter { it !in retryLater })
+                val byId = batch.associateBy { it.id }
+                pushed += batch.size - r.rejected.size
+                // Only refusals of this device's own events are worth telling the user about.
+                refused += r.rejected.filter { byId[it.id]?.deviceId == repository.deviceId }.map { it.reason }
+            }
+            afterId = page.last().id
+            if (page.size < SyncApi.MAX_PUSH) break
+        }
+        return pushed
+    }
+
+    private fun bySize(events: List<Event>): List<List<Event>> {
+        val batches = mutableListOf<List<Event>>()
+        var current = mutableListOf<Event>()
+        var bytes = 0
+        for (e in events) {
+            val size = CoreJson.encodeToString(Event.serializer(), e).length * 3 // worst case UTF-8
+            if (current.isNotEmpty() && bytes + size > MAX_PUSH_BYTES) {
+                batches += current
+                current = mutableListOf()
+                bytes = 0
+            }
+            current += e
+            bytes += size
+        }
+        if (current.isNotEmpty()) batches += current
+        return batches
+    }
+
     companion object {
+        /** Well under the server's 4 MB body limit for pushes. */
+        private const val MAX_PUSH_BYTES = 2_000_000
+        private const val MAX_PUSH_PASSES = 3
+
         /** Trims, drops trailing slashes and a trailing "/mcp", requires http(s). */
         fun normalize(url: String): String? {
             var u = url.trim().trimEnd('/')

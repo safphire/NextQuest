@@ -24,8 +24,14 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result =
         when (val outcome = (applicationContext as QuestApp).container.sync.sync()) {
-            is SyncOutcome.Ok, SyncOutcome.NotPaired -> Result.success()
-            is SyncOutcome.Failed -> if (outcome.retry) Result.retry() else Result.failure()
+            is SyncOutcome.Ok -> Result.success()
+            SyncOutcome.NotPaired -> Result.success().also { cancel(applicationContext) }
+            is SyncOutcome.Failed -> when {
+                // Removed on the server: the engine forgot the pairing; stop all scheduled syncs.
+                outcome.unpaired -> Result.failure().also { cancel(applicationContext) }
+                outcome.retry -> Result.retry()
+                else -> Result.failure()
+            }
         }
 
     companion object {
@@ -34,14 +40,18 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
         private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
-        /** Debounced: a newer request replaces a pending one, so a burst of edits syncs once. */
+        /**
+         * A burst of edits syncs once: while a request is pending or running, newer ones are
+         * dropped (KEEP). A running round never gets cancelled by an edit; it makes another
+         * push pass at its end to pick up what changed meanwhile.
+         */
         fun soon(context: Context, delaySeconds: Long = 5) {
             val request = OneTimeWorkRequestBuilder<SyncWorker>()
                 .setInitialDelay(delaySeconds, TimeUnit.SECONDS)
                 .setConstraints(online)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(SOON, ExistingWorkPolicy.REPLACE, request)
+            WorkManager.getInstance(context).enqueueUniqueWork(SOON, ExistingWorkPolicy.KEEP, request)
         }
 
         fun now(context: Context) = soon(context, delaySeconds = 0)

@@ -167,7 +167,8 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
                     onTrack = { startTrack(q) },
                     onMove = { vm.run { if (tab == BoardTab.INBOX) park(q.id) else toInbox(q.id) } },
                     onDrop = {
-                        vm.run(onOk = { vm.message("Dropped “${q.title}”", "Undo") { vm.run { restore(q.id, if (tab == BoardTab.LATER) QuestStatus.LATER else QuestStatus.INBOX) } } }) { drop(q.id) }
+                        val from = if (tab == BoardTab.LATER) QuestStatus.LATER else QuestStatus.INBOX // the list at drop time
+                        vm.run(onOk = { vm.message("Dropped “${q.title}”", "Undo") { vm.run { restore(q.id, from) } } }) { drop(q.id) }
                     },
                 )
             }

@@ -80,7 +80,10 @@ class VaultWriter(private val context: Context) {
         val manifest = readManifest(backups)
         val existing = folder.listFiles().mapNotNull { f ->
             val name = f.name ?: return@mapNotNull null
-            if (f.isFile && name.endsWith(".md", ignoreCase = true)) ExistingNote(f, name, readBytes(f)) else null
+            if (!f.isFile || !name.endsWith(".md", ignoreCase = true)) return@mapNotNull null
+            // An unreadable note would look foreign and push its quest to a suffixed name for
+            // good; better to skip this run and retry than to fork the note.
+            ExistingNote(f, name, readBytes(f) ?: throw VaultException("Couldn't read “$name” in the vault folder."))
         }
 
         // Unchanged since the app wrote it: ours to overwrite or delete.

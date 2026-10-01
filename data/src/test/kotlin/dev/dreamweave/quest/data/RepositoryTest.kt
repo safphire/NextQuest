@@ -13,6 +13,11 @@ import dev.dreamweave.quest.core.QuestCreated
 import dev.dreamweave.quest.core.QuestStatus
 import dev.dreamweave.quest.data.db.QuestDatabase
 import kotlinx.coroutines.Dispatchers
+import dev.dreamweave.quest.data.db.EventEntity
+import dev.dreamweave.quest.data.db.EventDao
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.TimeZone
 import org.junit.After
@@ -143,5 +148,30 @@ class RepositoryTest {
         val step = state.effectiveStep(parent)!!
         assertEquals("Measure the walls", step.text)
         assertEquals(kitchen, step.questId)
+    }
+
+    @Test
+    fun cancelledDuringTheInsert_memoryStillMatchesTheDatabase() {
+        runBlocking {
+            val real = db.events()
+            val started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val slowDao = object : EventDao by real {
+                override suspend fun insertAll(events: List<EventEntity>): List<Long> {
+                    started.complete(Unit)
+                    gate.await()
+                    return real.insertAll(events)
+                }
+            }
+            val repo = QuestRepository(slowDao, deviceA, { TimeZone.UTC }, { now }, Dispatchers.IO)
+            repo.load()
+            val job = launch(Dispatchers.Default) { QuestActions(repo) { now }.capture("Kept despite cancel") }
+            started.await()
+            job.cancel() // e.g. the screen closed right after Done
+            gate.complete(Unit)
+            job.join()
+            assertEquals(1, real.count())
+            assertEquals(listOf("Kept despite cancel"), repo.current().quests.values.map { it.title })
+        }
     }
 }

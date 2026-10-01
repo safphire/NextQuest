@@ -83,6 +83,7 @@ fun ProposalsScreen(vm: QuestViewModel, state: QuestState, settings: AppSettings
         }
         // Through run(): accepting shows XP and achievement toasts like doing it by hand.
         vm.run(
+            onOk = { vm.message("Accepted.") },
             onRejected = { reason ->
                 (reason == ProposalRules.NEEDS_NEXT_STEP).also { if (it) ask = Ask.NextStep(p.id, track, parkQuestId) }
             },

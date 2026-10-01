@@ -19,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -52,7 +51,6 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
     val context = LocalContext.current
     val c = (context.applicationContext as QuestApp).container
     val colors = Quest.colors
-    val scope = rememberCoroutineScope()
 
     var server by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
@@ -62,7 +60,11 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
     var pending by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(pairRequest) {
-        if (pairRequest != null) {
+        if (pairRequest != null && settings.serverUrl != null) {
+            // Already paired: a link from elsewhere must not quietly stage a different server.
+            vm.message("Already paired with ${settings.serverUrl}. Disconnect first to pair with another server.")
+            onPairHandled()
+        } else if (pairRequest != null) {
             server = pairRequest.serverUrl
             code = pairRequest.code
             error = null
@@ -78,11 +80,13 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
         }
         busy = true
         error = null
-        scope.launch {
+        // In the app's scope: leaving Settings mid-pair must not cut pairing short.
+        c.appScope.launch {
             val deviceName = listOf(Build.MANUFACTURER, Build.MODEL).filter { !it.isNullOrBlank() }.joinToString(" ").ifBlank { "Android phone" }
             val problem = c.sync.pair(server, code, deviceName)
             busy = false
             if (problem == null) {
+                // Settings-dependent UI reacts by itself; this only needs the scheduling.
                 code = ""
                 SyncWorker.schedulePeriodic(context)
                 vm.message("Paired. Changes now sync with your server.")
@@ -125,7 +129,7 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
                         style = MaterialTheme.typography.bodySmall, color = colors.textSecondary,
                     )
                 }
-                error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.text) }
+                (error ?: settings.lastSyncError)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.text) }
                 LimeButton(if (busy) "Pairing…" else "Pair", onClick = { pair() }, enabled = !busy && server.isNotBlank() && code.isNotBlank())
             } else {
                 Text("Synced with ${settings.serverUrl}", style = MaterialTheme.typography.titleSmall, color = colors.text)
@@ -157,7 +161,7 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
                 TextButton(onClick = {
                     confirmDisconnect = false
                     SyncWorker.cancel(context)
-                    scope.launch { c.sync.disconnect() }
+                    c.appScope.launch { c.sync.disconnect() }
                 }) { Text("Disconnect") }
             },
             dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancel") } },

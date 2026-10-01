@@ -38,9 +38,12 @@ class QuestApp : Application(), Configuration.Provider {
         // Covers app updates and process restarts in addition to the system broadcasts.
         container.appScope.launch { container.presence.refresh() }
         // Sync: periodically while paired, and shortly after every local change (debounced).
-        if (container.sync.isPaired) {
-            SyncWorker.schedulePeriodic(this)
-            SyncWorker.now(this)
+        container.appScope.launch {
+            container.sync.reconcile() // a restored install has settings but no token
+            if (container.sync.isPaired) {
+                SyncWorker.schedulePeriodic(this@QuestApp)
+                SyncWorker.now(this@QuestApp)
+            }
         }
         container.repository.changes
             .filter { it.local && container.sync.isPaired }

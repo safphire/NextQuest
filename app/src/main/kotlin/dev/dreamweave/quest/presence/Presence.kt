@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 
 /** Keeps alarms and the home-screen widget in step with the event log and settings. */
 class Presence(
@@ -42,7 +43,8 @@ class Presence(
             scheduler.reschedule(state, settings.current(), now = now, zone = repository.zone)
             // Take down reminders whose step changed elsewhere (done, replaced, snoozed, skipped).
             runCatching { Notifications.cancelStaleSteps(context) { stepId -> ReminderPlan.stillDue(state, stepId, now) } }
-            runCatching { QuestWidget().updateAll(context) }
+            // Best effort and bounded: a widget host that never answers must not stall alarms.
+            runCatching { withTimeout(10_000) { QuestWidget().updateAll(context) } }
         }
     }
 

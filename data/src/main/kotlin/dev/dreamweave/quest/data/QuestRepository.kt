@@ -105,13 +105,17 @@ class QuestRepository(
             }
             is Commits.Result.Ok -> {
                 // Once the rows are written, memory must follow even if the caller is cancelled.
-                withContext(NonCancellable + io) { dao.insertAll(events.map(EventEntity::from)) }
-                folder = result.folder
-                val after = result.folder.snapshot()
-                _state.value = after
-                val change = Change(before, after, events, local = true)
-                _changes.tryEmit(change)
-                CommitResult.Ok(change)
+                // The outer NonCancellable keeps the caller's dispatcher, so nothing in here is
+                // skipped by a cancellation check on the way back from the IO switch.
+                withContext(NonCancellable) {
+                    withContext(io) { dao.insertAll(events.map(EventEntity::from)) }
+                    folder = result.folder
+                    val after = result.folder.snapshot()
+                    _state.value = after
+                    val change = Change(before, after, events, local = true)
+                    _changes.tryEmit(change)
+                    CommitResult.Ok(change)
+                }
             }
         }
     }
@@ -124,20 +128,25 @@ class QuestRepository(
     suspend fun ingest(events: List<Event>, fromServer: Boolean = false): IngestResult = mutex.withLock {
         val before = ensureLoaded()
         if (events.isEmpty()) return@withLock IngestResult(0, emptyList())
-        val fresh = withContext(NonCancellable + io) {
+        // Same rule as commit: stored rows and the in-memory fold move together or not at all.
+        withContext(NonCancellable) { store(events, fromServer, before) }
+    }
+
+    private suspend fun store(events: List<Event>, fromServer: Boolean, before: QuestState): IngestResult {
+        val fresh = withContext(io) {
             val existing = events.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             val unique = events.filter { it.id !in existing }.distinctBy { it.id }
             dao.insertAll(unique.map { EventEntity.from(it, pushed = fromServer) })
             if (fromServer) events.map { it.id }.filter { it in existing }.chunked(500).forEach { dao.markPushed(it) }
             unique
         }
-        if (fresh.isEmpty()) return@withLock IngestResult(0, emptyList())
+        if (fresh.isEmpty()) return IngestResult(0, emptyList())
         fresh.forEach { factory!!.observe(it.ts) }
         val f = folder!!
         val skippedBefore = f.snapshot().skipped.size
         val needsRefold = fresh.any { f.isOutOfOrder(it) }
         val newFolder = if (needsRefold) {
-            withContext(NonCancellable + io) { Fold.folder(dao.all().map { it.toEvent() }, tz) }
+            withContext(io) { Fold.folder(dao.all().map { it.toEvent() }, tz) }
         } else {
             fresh.sortedWith(Event.ORDER).forEach { f.apply(it) }
             f
@@ -148,7 +157,7 @@ class QuestRepository(
         _changes.tryEmit(Change(before, after, fresh, local = false))
         val freshIds = fresh.map { it.id }.toSet()
         val skipped = if (needsRefold) after.skipped.filter { it.eventId in freshIds } else after.skipped.drop(skippedBefore)
-        IngestResult(fresh.size, skipped.map { "${it.type}: ${it.reason}" })
+        return IngestResult(fresh.size, skipped.map { "${it.type}: ${it.reason}" })
     }
 
     /** Re-derives everything, e.g. after the device time zone changed (streak days move). */
