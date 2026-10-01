@@ -19,7 +19,6 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.core.QuestStatus
-import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,7 +51,7 @@ class CoreLoopUiTest {
             }
         } catch (e: ComposeTimeoutException) {
             val tree = runCatching { compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString() }.getOrElse { "<no tree: $it>" }
-            val quests = runCatching { runBlocking { repository.current().quests.values.map { "${it.title}/${it.status}" } } }.getOrNull()
+            val quests = repository.state.value?.quests?.values?.map { "${it.title}/${it.status}" }
             throw AssertionError("Timed out waiting for $what. Quests: $quests\n$tree", e)
         }
     }
@@ -75,7 +74,9 @@ class CoreLoopUiTest {
         waitForText("Capture")
         compose.onNode(hasSetTextAction()).performTextInput("Write the talk")
         compose.onNode(hasSetTextAction()).performImeAction()
-        waitFor("the capture to reach the event log") { runBlocking { repository.current().quests.isNotEmpty() } }
+        // Never runBlocking on the main thread here: a commit started from the UI holds the
+        // repository lock and resumes on this very thread (deadlock). Read the state flow.
+        waitFor("the capture to reach the event log") { repository.state.value?.quests?.isNotEmpty() == true }
         waitFor("the capture sheet to close") { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isEmpty() }
 
         // Board → Track → first step.
@@ -99,7 +100,8 @@ class CoreLoopUiTest {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         assertTrue(elapsedMs < 30_000, "core loop took ${elapsedMs}ms")
 
-        val state = runBlocking { repository.current() }
+        compose.waitForIdle()
+        val state = repository.state.value!!
         val quest = state.quests.values.single()
         assertEquals(QuestStatus.TRACKED, quest.status)
         assertEquals("Draft the intro", state.effectiveStep(quest.id)!!.text)

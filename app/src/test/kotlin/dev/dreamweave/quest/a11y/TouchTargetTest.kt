@@ -12,7 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.MainActivity
 import dev.dreamweave.quest.QuestApp
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -62,7 +62,9 @@ class TouchTargetTest {
 
     @Test
     fun mainScreens_haveNoTouchTargetUnder48dp() {
-        runBlocking {
+        // Off the main thread, then pumped: blocking the main thread would deadlock with the
+        // view model, whose coroutines resume on it while holding the repository lock.
+        val setup = container.appScope.launch {
             val actions = container.actions
             actions.capture("Write the talk")
             actions.capture("Fix the bike")
@@ -70,6 +72,7 @@ class TouchTargetTest {
             actions.track(talk, firstStep = "Outline three points")
             container.settings.update { it.copy(onboardingDone = true) }
         }
+        compose.waitUntil(15_000) { setup.isCompleted }
         val problems = mutableMapOf<String, List<String>>()
 
         waitForText("Outline three points")
