@@ -30,14 +30,12 @@ replica and every shuffle of the log fold to the same state.
 
 ## Timestamps
 
-Each device stamps events with a hybrid clock: `ts = max(wall clock,
-last ts + 1)`, and receiving an event bumps the device's last ts — but never
-beyond its own wall clock + 5 minutes, so one device with a wrong clock can't
-drag the others into the future (D-112). Streaks never depend on `ts`: each
-completion carries the completing device's local day (D-108). A device's
+Each device stamps events with a hybrid logical clock: `ts = max(wall clock,
+last ts + 1)`, and receiving an event bumps the device's last ts. A device's
 own events therefore stay in the order it wrote them, and a local edit always
-sorts after the remote events it was made on top of, even when clocks are
-skewed.
+sorts after the remote events it was made on top of — even when a peer's clock
+is far ahead (D-112). Streaks never depend on `ts`: each completion carries the
+completing device's local day (D-108).
 
 ## Concurrent edits — what wins
 

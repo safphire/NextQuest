@@ -381,6 +381,26 @@ class FoldTest {
     }
 
     @Test
+    fun aLocalEditOnAFastPeersQuest_survivesRefold() {
+        val s = Scenario(start = "2026-03-01T09:00:00Z")
+        // Peer B (clock 2 days ahead) creates a quest; this device sees it, then tracks it.
+        val peerClock = s.now + 2L * 86_400_000
+        val peer = EventFactory(Ids.newId(), clock = { peerClock })
+        val q = Ids.newId(s.now)
+        val created = peer.create(EventTypes.QUEST_CREATED, Events.questCreated(QuestCreated(q, "From B")).payload)
+        s.folder.apply(created)
+        s.log += created
+        s.factory.observe(created.ts)
+        s.ok(Events.stepSet(StepSet(Ids.newId(s.now), q, "go")), Events.questStatusSet(QuestStatusSet(q, QuestStatus.TRACKED)))
+        val refolded = Fold.of(s.log, s.tz)
+        assertEquals(QuestStatus.TRACKED, refolded.quests.getValue(q).status)
+        assertEquals(s.state.quests, refolded.quests)
+        // A hand-made local event that would sort before applied ones is refused outright.
+        val stale = Event(Ids.newId(s.now), s.factory.deviceId, 999, 1, "user", EventTypes.QUEST_CREATED, Events.questCreated(QuestCreated(Ids.newId(s.now), "x")).payload)
+        assertIs<Commits.Result.Rejected>(Commits.validate(s.folder, listOf(stale)))
+    }
+
+    @Test
     fun inboxSorted_countsEachTopLevelQuestOnce() {
         val s = Scenario()
         val q = s.capture("Bouncy")

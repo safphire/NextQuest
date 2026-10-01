@@ -7,6 +7,7 @@ import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class GameTest {
     private val utc = TimeZone.UTC
@@ -145,17 +146,39 @@ class GameTest {
     }
 
     @Test
-    fun aDeviceWithAFastClockDoesNotDragOthersIntoTheFuture() {
+    fun aDeviceWithAFastClock_cannotBreakAnyonesStreak() {
+        // Five real days of steps on this device.
+        val s = Scenario(start = "2026-03-01T09:00:00Z")
+        val q = s.tracked("Q")
+        repeat(5) {
+            s.ok(Events.stepCompleted(StepCompleted(s.stepOf(q), next = s.next(q, "n$it"), local = LocalStamp.of(s.now, utc))))
+            s.advanceHours(24)
+        }
+        // A peer whose clock is a year ahead completes a step (its stamp is in 2027).
+        val peerClock = t("2027-01-10T09:00:00Z")
+        val peer = EventFactory(Ids.newId(), clock = { peerClock })
+        val peerStep = s.step(q, "peer step")
+        val e = peer.create(EventTypes.STEP_COMPLETED, Events.stepCompleted(StepCompleted(peerStep, next = s.next(q, "after"), local = LocalStamp.of(peerClock, utc))).payload)
+        val merged = Fold.of(s.log + e, utc)
+        // Today (Mar 5, real time) the streak is still the real 5-day one.
+        assertEquals(5, merged.streak(t("2026-03-05T20:00:00Z")).current)
+        // A forged stamp whose day doesn't match its time falls back to the event time.
+        val forged = Events.stepCompleted(StepCompleted(s.stepOf(q), next = s.next(q, "x"), local = LocalStamp(1, "1999-01-01", 0)))
+        s.ok(forged)
+        assertTrue(s.state.steps.values.none { it.doneDay == kotlinx.datetime.LocalDate(1999, 1, 1) })
+    }
+
+    @Test
+    fun hybridClock_followsObservedTimestampsForCausality() {
         var clock = t("2026-03-01T09:00:00Z")
         val f = EventFactory(Ids.newId(clock), clock = { clock })
-        f.observe(clock + 5L * 86_400_000) // a device 5 days ahead
+        f.observe(clock + 2L * 86_400_000) // a peer two days ahead
         val e = f.create("quest.created", kotlinx.serialization.json.JsonObject(emptyMap()))
-        assert(e.ts <= clock + EventFactory.MAX_FUTURE_SKEW_MS + 1) { "ts ${e.ts}" }
+        assertTrue(e.ts > clock + 2L * 86_400_000) // our edit sorts after what we saw
         f.observe(Long.MAX_VALUE)
         val e2 = f.create("quest.created", kotlinx.serialization.json.JsonObject(emptyMap()))
-        assert(e2.ts > e.ts)
-        clock += 86_400_000
-        assert(f.create("x", kotlinx.serialization.json.JsonObject(emptyMap())).ts == clock)
+        assertEquals(Long.MAX_VALUE, e2.ts) // saturates, never wraps
+        clock += 1
     }
 
     @Test

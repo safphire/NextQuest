@@ -68,3 +68,31 @@ Issues and resolution (all fixed in the follow-up commit):
 - Accepted as known: `Commits.validate` copies the folder per commit (O(state));
   fine for a personal log, revisit if logs grow past ~50k events.
   Completing a superseded step of a finished quest still earns XP (no lost XP, D-106).
+
+**Round 2** (independent reviewer with probe tests, commit `b8dc436`)
+
+| Round-1 item | Verdict |
+|---|---|
+| Fast clock / overflow | PARTIAL — cap held, but see N1; a far-future stamp still ended the current streak |
+| Duplicate parks | FIXED |
+| Time-zone dependence | FIXED (UTC/Tokyo/Kiritimati/Pago Pago/LA agree) |
+| set_next_step with focused subquest | FIXED |
+| Widget exemption | FIXED |
+| Envelope validation | FIXED |
+| Low items | PARTIAL — `source` still spoofable vs `client` |
+
+New issues and resolution:
+- HIGH N1 — the +5 min observe cap broke causality (a local edit on a fast
+  peer's quest was skipped on refold) → pure hybrid clock restored (D-112);
+  `Commits.validate` refuses local events that would sort before applied ones;
+  test `FoldTest.aLocalEditOnAFastPeersQuest_survivesRefold`.
+- MEDIUM N2 — future-dated stamps poisoned streak liveness → days after today
+  are ignored for the current streak; stamps whose day doesn't match their
+  instant fall back to the event time; test
+  `GameTest.aDeviceWithAFastClock_cannotBreakAnyonesStreak`.
+- LOW — `source` vs `client` → enforced; client names trimmed; accept-time
+  filtering by `ProblemCode` instead of message text; stale doc comments fixed.
+- Accepted as known: forged stamps can unlock streak achievements (single-user
+  data; an untrusted server could forge anything anyway); a device that resets
+  its sequence while keeping its id loses those events (device ids are
+  excluded from backup, so this needs deliberate tampering).

@@ -16,6 +16,9 @@ object Commits {
     fun validate(current: Folder, events: List<Event>): Result {
         val trial = current.copy()
         for (e in events) {
+            // Local events must sort after everything already applied, or a refold would
+            // judge them against a different state than the one the user saw.
+            if (trial.isOutOfOrder(e)) return Result.Rejected(e, "event would sort before events already applied")
             when (val outcome = trial.apply(e)) {
                 Outcome.Applied -> Unit
                 is Outcome.Skipped -> return Result.Rejected(e, outcome.reason)

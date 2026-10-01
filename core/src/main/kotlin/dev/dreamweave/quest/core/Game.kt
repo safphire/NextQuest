@@ -77,6 +77,8 @@ object Streaks {
         var best = 0
         var chain = 0
         var previous: LocalDate? = null
+        var lastPast: LocalDate? = null
+        var chainAtLastPast = 0
         for ((day, firstMinute) in firstMinuteOfDay) {
             val gap = previous?.daysUntil(day)
             chain = when {
@@ -86,10 +88,15 @@ object Streaks {
             }
             if (chain > best) best = chain
             previous = day
+            if (day <= today) {
+                lastPast = day
+                chainAtLastPast = chain
+            }
         }
-        val sinceLast = previous!!.daysUntil(today)
+        val last = lastPast ?: return StreakInfo(0, best, null)
+        val sinceLast = last.daysUntil(today)
         val alive = sinceLast <= 1 || (sinceLast == 2 && nowMinute < GRACE_DEADLINE_MINUTE)
-        return StreakInfo(if (alive) chain else 0, best, previous)
+        return StreakInfo(if (alive) chainAtLastPast else 0, best, last)
     }
 
     fun compute(steps: Collection<Pair<LocalDate, Int>>, nowMs: Long, tz: TimeZone): StreakInfo {
@@ -152,10 +159,29 @@ class StreakTracker {
 
     fun info(today: LocalDate, nowMinute: Int): StreakInfo {
         if (days.isEmpty()) return StreakInfo(0, 0, null)
-        val last = days.lastKey()
+        // Days after today (a device with a fast clock) don't count toward the current streak.
+        val past = days.headMap(today, true)
+        if (past.isEmpty()) return StreakInfo(0, best, null)
+        val last = past.lastKey()
+        val chainToLast = if (last == days.lastKey()) chain else chainEndingAt(last)
         val since = last.daysUntil(today)
         val alive = since <= 1 || (since == 2 && nowMinute < Streaks.GRACE_DEADLINE_MINUTE)
-        return StreakInfo(if (alive) chain else 0, best, last)
+        return StreakInfo(if (alive) chainToLast else 0, best, last)
+    }
+
+    private fun chainEndingAt(day: LocalDate): Int {
+        var length = 0
+        var prev: LocalDate? = null
+        for ((d, m) in days.headMap(day, true)) {
+            length = if (prev != null) {
+                val gap = prev.daysUntil(d)
+                if (gap == 1 || (gap == 2 && m < Streaks.GRACE_DEADLINE_MINUTE)) length + 1 else 1
+            } else {
+                1
+            }
+            prev = d
+        }
+        return length
     }
 
     fun info(nowMs: Long, tz: TimeZone): StreakInfo {

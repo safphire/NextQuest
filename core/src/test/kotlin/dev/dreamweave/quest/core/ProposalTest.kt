@@ -228,6 +228,12 @@ class ProposalTest {
             ProposalCreated(Ids.newId(), ProposalSource.CLAUDE, "Claude", "add_quest", ProposalOps.encode(AddQuestPayload("x"))),
         )
         assertContains(s.rejected(created, actor = Actors.mcp("SomeoneElse")), "does not match")
+        val spoofedChip = Events.proposalCreated(
+            ProposalCreated(Ids.newId(), ProposalSource.CLAUDE, "chatgpt", "add_quest", ProposalOps.encode(AddQuestPayload("x"))),
+        )
+        assertContains(s.rejected(spoofedChip, actor = Actors.mcp("chatgpt")), "source does not match")
+        val codes = ProposalRules.problems(s.state, "add_quest", ProposalOps.encode(AddQuestPayload(" ", track = true))).map { it.code }
+        assertEquals(listOf(ProblemCode.TEXT, ProblemCode.NEEDS_STEP), codes)
     }
 
     @Test

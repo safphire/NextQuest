@@ -137,23 +137,27 @@ object ProposalRules {
      * Returns human-readable problems; empty means valid. Messages are written for
      * the AI model, so they say how to fix the proposal.
      */
-    fun validate(state: QuestState, op: String, payload: JsonObject): List<String> {
-        val kind = ProposalOp.fromWire(op) ?: return listOf("unknown operation '$op'")
+    fun validate(state: QuestState, op: String, payload: JsonObject): List<String> = problems(state, op, payload).map { it.message }
+
+    /** Like [validate], with a machine-readable [ProblemCode] per problem. */
+    fun problems(state: QuestState, op: String, payload: JsonObject): List<Problem> {
+        val kind = ProposalOp.fromWire(op) ?: return listOf(Problem(ProblemCode.UNKNOWN_OP, "unknown operation '$op'"))
         val p = ProposalOps.decode(op, payload)
-            ?: return listOf("malformed payload for $op: expected fields ${ProposalOps.fieldsOf(kind)}")
-        val errors = mutableListOf<String>()
+            ?: return listOf(Problem(ProblemCode.MALFORMED, "malformed payload for $op: expected fields ${ProposalOps.fieldsOf(kind)}"))
+        val errors = mutableListOf<Problem>()
+        fun add(code: ProblemCode, message: String) { errors += Problem(code, message) }
         fun openQuest(id: String, what: String = "quest"): Quest? {
             val q = state.quests[id]
             when {
-                q == null -> errors += "$what $id does not exist"
-                !q.status.isOpen -> errors += "$what “${q.title}” is already ${q.status.name.lowercase()}"
+                q == null -> add(ProblemCode.NOT_FOUND, "$what $id does not exist")
+                !q.status.isOpen -> add(ProblemCode.FINISHED, "$what “${q.title}” is already ${q.status.name.lowercase()}")
                 else -> return q
             }
             return null
         }
         fun checkText(text: String?, what: String, max: Int) {
-            if (text != null && text.isBlank()) errors += "$what must not be empty"
-            if (text != null && text.trim().length > max) errors += "$what is longer than $max characters"
+            if (text != null && text.isBlank()) add(ProblemCode.TEXT, "$what must not be empty")
+            if (text != null && text.trim().length > max) add(ProblemCode.TEXT, "$what is longer than $max characters")
         }
         when (kind) {
             ProposalOp.ADD_QUEST -> {
@@ -161,10 +165,13 @@ object ProposalRules {
                 checkText(p.title, "title", Limits.MAX_TITLE)
                 checkText(p.nextStep, "nextStep", Limits.MAX_TEXT)
                 if (p.track) {
-                    if (p.nextStep.isNullOrBlank()) errors += "a tracked quest needs a nextStep"
+                    if (p.nextStep.isNullOrBlank()) add(ProblemCode.NEEDS_STEP, "a tracked quest needs a nextStep")
                     if (availableSlotsForNewTracks(state) <= 0) {
-                        errors += "all ${state.slotCap} slots are full; propose_park_quest for a tracked quest " +
-                            "first, or set track=false so the quest goes to the inbox"
+                        add(
+                            ProblemCode.SLOTS_FULL,
+                            "all ${state.slotCap} slots are full; propose_park_quest for a tracked quest " +
+                                "first, or set track=false so the quest goes to the inbox",
+                        )
                     }
                 }
             }
@@ -173,8 +180,11 @@ object ProposalRules {
                 val q = openQuest(p.questId)
                 val focused = q?.focusedChildId?.let { state.quests[it] }?.takeIf { it.status.isOpen }
                 if (q != null && q.isRoot && focused != null) {
-                    errors += "the visible step of “${q.title}” belongs to its focused subquest “${focused.title}” " +
-                        "(${focused.id}); propose set_next_step for that subquest instead"
+                    add(
+                        ProblemCode.FOCUSED_SUBQUEST,
+                        "the visible step of “${q.title}” belongs to its focused subquest “${focused.title}” " +
+                            "(${focused.id}); propose set_next_step for that subquest instead",
+                    )
                 }
                 checkText(p.text, "text", Limits.MAX_TEXT)
             }
@@ -183,15 +193,15 @@ object ProposalRules {
                 openQuest(p.questId)
                 val s = state.steps[p.stepId]
                 when {
-                    s == null -> errors += "step ${p.stepId} does not exist"
-                    s.questId != p.questId -> errors += "step ${p.stepId} does not belong to quest ${p.questId}"
-                    s.isDone -> errors += "step “${s.text}” is already done"
+                    s == null -> add(ProblemCode.NOT_FOUND, "step ${p.stepId} does not exist")
+                    s.questId != p.questId -> add(ProblemCode.STEP_MISMATCH, "step ${p.stepId} does not belong to quest ${p.questId}")
+                    s.isDone -> add(ProblemCode.FINISHED, "step “${s.text}” is already done")
                 }
             }
             ProposalOp.ADD_SUBQUEST -> {
                 p as AddSubquestPayload
                 val parent = openQuest(p.parentId, "parent quest")
-                if (parent != null && !parent.isRoot) errors += "subquests can only be added to top-level quests"
+                if (parent != null && !parent.isRoot) add(ProblemCode.NOT_TOP_LEVEL, "subquests can only be added to top-level quests")
                 checkText(p.title, "title", Limits.MAX_TITLE)
                 checkText(p.nextStep, "nextStep", Limits.MAX_TEXT)
             }
@@ -200,18 +210,18 @@ object ProposalRules {
                 openQuest(p.questId)
                 val s = state.steps[p.stepId]
                 if (s == null || s.questId != p.questId || state.quests[p.questId]?.openStepId != p.stepId) {
-                    errors += "step ${p.stepId} is not the current step of quest ${p.questId}"
+                    add(ProblemCode.STEP_MISMATCH, "step ${p.stepId} is not the current step of quest ${p.questId}")
                 }
             }
             ProposalOp.PARK_QUEST -> {
                 p as ParkQuestPayload
                 val q = openQuest(p.questId)
-                if (q != null && !q.isRoot) errors += "only top-level quests can be parked"
-                if (q != null && q.status == QuestStatus.LATER) errors += "quest is already parked"
+                if (q != null && !q.isRoot) add(ProblemCode.NOT_TOP_LEVEL, "only top-level quests can be parked")
+                if (q != null && q.status == QuestStatus.LATER) add(ProblemCode.ALREADY, "quest is already parked")
                 val alreadyPending = state.pendingProposals.any { pp ->
                     pp.op == ProposalOp.PARK_QUEST.wire && (ProposalOps.decode(pp.op, pp.payload) as? ParkQuestPayload)?.questId == p.questId
                 }
-                if (q != null && alreadyPending) errors += "a park proposal for this quest is already waiting for the user"
+                if (q != null && alreadyPending) add(ProblemCode.PARK_PENDING, "a park proposal for this quest is already waiting for the user")
             }
         }
         return errors
@@ -240,8 +250,8 @@ object ProposalRules {
         val label = ProposalOps.label(proposal.op)
         val p = ProposalOps.decode(proposal.op, proposal.payload)
             ?: return ProposalPreview(label, "?", null, "This proposal can't be read by this version of the app.", stale = "unreadable")
-        val problems = if (proposal.status == ProposalStatus.PENDING) validate(state, proposal.op, proposal.payload) else emptyList()
-        val stale = problems.firstOrNull()
+        val problemList = if (proposal.status == ProposalStatus.PENDING) problems(state, proposal.op, proposal.payload) else emptyList()
+        val stale = problemList.firstOrNull()?.message
         fun title(id: String) = state.quests[id]?.title ?: "(missing quest)"
         return when (p) {
             is AddQuestPayload -> ProposalPreview(
@@ -252,7 +262,7 @@ object ProposalRules {
                 },
                 isNewQuestToTrack = p.track,
                 // Slots being full is not "stale" for a new quest: the card offers To Inbox or a swap.
-                stale = problems.firstOrNull { "slots are full" !in it },
+                stale = problemList.firstOrNull { it.code != ProblemCode.SLOTS_FULL }?.message,
             )
             is SetNextStepPayload -> ProposalPreview(
                 label, title(p.questId), state.openStep(p.questId)?.text ?: "(no next step)", p.text.trim(), stale = stale,
@@ -301,9 +311,9 @@ object ProposalRules {
         val payloadJson = decision.edited ?: proposal.payload
         // Re-check the soft rules at accept time. Full slots are handled by the swap
         // dialog (parkQuestId); the fold enforces the hard cap either way.
-        validate(state, proposal.op, payloadJson)
-            .firstOrNull { "slots are full" !in it && "already waiting for the user" !in it && "needs a nextStep" !in it }
-            ?.let { throw ProposalException(it.replaceFirstChar { c -> c.uppercase() } + ".") }
+        problems(state, proposal.op, payloadJson)
+            .firstOrNull { it.code !in ACCEPT_TIME_HANDLED }
+            ?.let { throw ProposalException(it.message.replaceFirstChar { c -> c.uppercase() } + ".") }
         val p = ProposalOps.decode(proposal.op, payloadJson) ?: throw ProposalException("This proposal can't be read.")
         val out = mutableListOf<PendingEvent>()
         fun nextFor(questId: String, text: String?): NextStep? =
@@ -350,3 +360,13 @@ object ProposalRules {
 }
 
 class ProposalException(message: String) : Exception(message)
+
+enum class ProblemCode {
+    UNKNOWN_OP, MALFORMED, NOT_FOUND, FINISHED, TEXT, NEEDS_STEP, SLOTS_FULL,
+    FOCUSED_SUBQUEST, NOT_TOP_LEVEL, STEP_MISMATCH, ALREADY, PARK_PENDING,
+}
+
+data class Problem(val code: ProblemCode, val message: String)
+
+/** Problems the accept flow resolves itself: the swap dialog (slots), the sheet (next step). */
+private val ACCEPT_TIME_HANDLED = setOf(ProblemCode.SLOTS_FULL, ProblemCode.PARK_PENDING, ProblemCode.NEEDS_STEP)

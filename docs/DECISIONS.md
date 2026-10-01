@@ -139,19 +139,26 @@ swap dialog if needed) or To Inbox; the fold enforces the hard cap.
 Before any rule, the fold checks the envelope: event id and device id are
 UUIDv7, `seq` ≥ 1, `ts` > 0, and a `(deviceId, seq)` pair is never reused by
 a different event. Malformed envelopes are skipped like any invalid event.
-A proposal's `client` must equal the `mcp:<client>` of its actor, so the
-source chip can't be spoofed.
+A proposal's `client` must equal the `mcp:<client>` of its actor, and its
+`source` must be the one derived from that client name, so the source chip
+can't be spoofed.
 
-### D-112 · Bounded clock skew
-A device adopts a remote event's timestamp for its hybrid clock only up to
-5 minutes ahead of its own wall clock. A peer with a clock days ahead can't
-push everyone else's timestamps (and ordering) into the future; with D-108,
-it can't distort streaks either.
+### D-112 · Causality over clock sanity
+Event timestamps are a hybrid logical clock: a device's next event always sorts
+after every event it has seen, even if a peer's clock is days ahead. (An
+earlier draft capped how far ahead a device would follow a peer; the P1
+round-2 review showed that let a local edit sort *before* the remote quest it
+was made on, so it vanished on refold.) Clock sanity is handled where it
+matters to the user instead: streaks and "done at" use each completion's own
+local stamp (D-108), stamps whose day doesn't match their instant are ignored,
+and days after "today" never count toward the current streak. A fast peer can
+only skew ordering metadata such as "recently touched". As a safety net, a
+local commit that would sort before already-applied events is refused.
 
 ### D-113 · Proposal rules re-checked at accept time
 `ProposalRules.decide` re-runs the proposal validation on the (possibly
-edited) payload, except for "slots are full" (the swap dialog handles it) and
-"needs a next step" (the sheet asks for it). `set_next_step` targets one
+edited) payload, except for problem codes the accept flow resolves itself:
+`SLOTS_FULL` / `PARK_PENDING` (the swap dialog) and `NEEDS_STEP` (the sheet). `set_next_step` targets one
 quest's own step; on a quest whose visible step belongs to a focused
 subquest it is refused with a message naming the subquest. A second
 `park_quest` for the same quest is refused, and pending parks free each slot

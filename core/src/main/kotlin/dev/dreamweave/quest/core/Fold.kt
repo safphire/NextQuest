@@ -2,6 +2,7 @@
 package dev.dreamweave.quest.core
 
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.daysUntil
 import kotlinx.datetime.toLocalDateTime
 
 /** One line of human-readable history, derived from an accepted event. */
@@ -78,7 +79,7 @@ class QuestState internal constructor(
         return if (focused != null && focused.status.isOpen) focused else root
     }
 
-    /** Tracked but without a next step — only possible after a notification/widget Done. */
+    /** Tracked but without a next step — only possible after a notification Done. */
     fun needsNextStep(rootId: String): Boolean {
         val q = quests[rootId] ?: return false
         return q.status == QuestStatus.TRACKED && effectiveStepId(quests, rootId) == null
@@ -121,7 +122,7 @@ class QuestState internal constructor(
  * Invariants enforced here, for every path (UI, import, sync, MCP):
  * - never more tracked root quests than the slot cap;
  * - a tracked quest always has a next step, except right after a step completed from a
- *   notification or the widget (the quest then shows "Needs next step");
+ *   notification (the quest then shows "Needs next step");
  * - AI clients (`mcp:*` actors) can only create proposals; everything else needs `user`.
  */
 class Folder(val tz: TimeZone) {
@@ -493,7 +494,10 @@ class Folder(val tz: TimeZone) {
             if (s.isDone) throw Reject("step already done")
             val stamp = p.local?.let { l ->
                 val day = runCatching { kotlinx.datetime.LocalDate.parse(l.day) }.getOrNull()
-                if (day == null || l.minute !in 0 until 24 * 60 || l.at <= 0) null else Triple(l.at, day, l.minute)
+                // The local day must be the stamp's own instant seen from some time zone (±1 day of UTC).
+                val utcDay = kotlinx.datetime.Instant.fromEpochMilliseconds(l.at).toLocalDateTime(TimeZone.UTC).date
+                val consistent = day != null && kotlin.math.abs(utcDay.daysUntil(day)) <= 1
+                if (!consistent || l.minute !in 0 until 24 * 60 || l.at <= 0) null else Triple(l.at, day!!, l.minute)
             } ?: run {
                 val dt = kotlinx.datetime.Instant.fromEpochMilliseconds(ts).toLocalDateTime(tz)
                 Triple(ts, dt.date, dt.hour * 60 + dt.minute)
@@ -536,7 +540,8 @@ class Folder(val tz: TimeZone) {
         fun proposalCreated(p: ProposalCreated) {
             newId(p.proposalId, proposals, "proposal")
             if (p.op.isBlank()) throw Reject("proposal op is empty")
-            if (Actors.mcpClient(event.actor) != p.client) throw Reject("proposal client does not match the actor")
+            if (Actors.mcpClient(event.actor) != p.client.trim()) throw Reject("proposal client does not match the actor")
+            if (ProposalSource.fromClientName(p.client) != p.source) throw Reject("proposal source does not match the client")
             put(
                 Proposal(
                     id = p.proposalId, source = p.source, client = p.client, createdAt = ts,

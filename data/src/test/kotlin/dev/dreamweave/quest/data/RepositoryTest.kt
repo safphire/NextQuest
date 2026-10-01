@@ -111,11 +111,11 @@ class RepositoryTest {
         repo.ingest(listOf(soon.copy(ts = now + 60_000)))
         QuestActions(repo) { now }.capture("After soon")
         assertTrue(repo.allEvents().last { it.deviceId == deviceA }.ts > now + 60_000)
-        // …but a peer clock far in the future is only followed up to +5 minutes.
+        // …even when the peer's clock is far ahead (causality wins; streaks use local stamps).
         val far = remote.create("quest.created", Events.questCreated(QuestCreated(Ids.newId(now), "Far")).payload)
         repo.ingest(listOf(far.copy(ts = now + 10_000_000)))
         QuestActions(repo) { now }.capture("After far")
         val mine = repo.allEvents().filter { it.deviceId == deviceA }.maxBy { it.seq }
-        assertTrue(mine.ts <= now + EventFactory.MAX_FUTURE_SKEW_MS + 1_000)
+        assertTrue(mine.ts > now + 10_000_000)
     }
 }

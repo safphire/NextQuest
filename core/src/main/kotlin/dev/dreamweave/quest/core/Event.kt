@@ -82,21 +82,17 @@ class EventFactory(
     val currentTs: Long get() = lastTs
 
     /**
-     * Notes a remote event's timestamp. Timestamps more than [MAX_FUTURE_SKEW_MS] ahead of
-     * this device's clock are only honored up to that limit, so one device with a wrong
-     * clock can't drag every other device's timestamps into the future.
+     * Notes a remote event's timestamp, so this device's next event sorts after it.
+     * Causality wins over clock sanity: a peer with a fast clock pulls ordering
+     * timestamps forward, but streaks and "done at" use each completion's own local
+     * stamp ([LocalStamp]), so nothing the user sees about their days is affected.
      */
     fun observe(ts: Long) {
-        val bounded = minOf(ts, clock() + MAX_FUTURE_SKEW_MS)
-        if (bounded > lastTs) lastTs = bounded
-    }
-
-    companion object {
-        const val MAX_FUTURE_SKEW_MS = 5 * 60 * 1000L
+        if (ts > lastTs) lastTs = ts
     }
 
     fun create(type: String, payload: JsonObject, actor: String = Actors.USER): Event {
-        val ts = maxOf(clock(), lastTs + 1)
+        val ts = maxOf(clock(), if (lastTs == Long.MAX_VALUE) lastTs else lastTs + 1)
         lastTs = ts
         lastSeq += 1
         return Event(newId(ts), deviceId, lastSeq, ts, actor, type, payload)
