@@ -9,11 +9,13 @@ import dev.dreamweave.quest.data.SettingsStore
 import dev.dreamweave.quest.protocol.PairRequest
 import dev.dreamweave.quest.protocol.PushRequest
 import dev.dreamweave.quest.protocol.SyncApi
+import io.ktor.serialization.ContentConvertException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 
 sealed interface SyncOutcome {
     data class Ok(val pushed: Int, val pulled: Int, val refused: List<String>) : SyncOutcome
@@ -60,7 +62,7 @@ class SyncEngine(
         }
         withContext(NonCancellable) {
             tokens.token = response.token
-            settings.update { it.copy(serverUrl = server, syncCursor = 0, lastSyncAt = null, lastSyncError = null) }
+            settings.update { it.copy(serverUrl = server, syncCursor = 0, syncCursorEventId = null, lastSyncAt = null, lastSyncError = null) }
             // A (new) server has none of this device's events yet.
             repository.markAllUnpushed()
         }
@@ -83,7 +85,7 @@ class SyncEngine(
 
     private suspend fun forget(error: String?) {
         tokens.token = null
-        settings.update { it.copy(serverUrl = null, syncCursor = 0, lastSyncAt = null, lastSyncError = error) }
+        settings.update { it.copy(serverUrl = null, syncCursor = 0, syncCursorEventId = null, lastSyncAt = null, lastSyncError = error) }
     }
 
     suspend fun sync(): SyncOutcome = mutex.withLock {
@@ -115,6 +117,9 @@ class SyncEngine(
     }
 
     private fun failure(e: Exception): SyncOutcome.Failed = when {
+        // A reply this version can't read won't fix itself by retrying (app and server versions differ).
+        e is SerializationException || e is ContentConvertException ->
+            SyncOutcome.Failed("The server's reply wasn't understood. Update the app and the server to matching versions.", retry = false)
         e !is SyncHttpException -> SyncOutcome.Failed("Can't reach the server.", retry = true)
         e.status == 401 -> SyncOutcome.Failed("This phone was removed from the server. Pair it again in Settings.", retry = false, unpaired = true)
         e.status == 429 || e.status >= 500 -> SyncOutcome.Failed(e.message ?: "The server is busy.", retry = true)
@@ -122,28 +127,32 @@ class SyncEngine(
     }
 
     private suspend fun round(server: String, token: String): SyncOutcome {
-        var cursor = settings.current().syncCursor
+        val start = settings.current()
+        var cursor = start.syncCursor
+        var cursorEventId = start.syncCursorEventId
 
         // Push first, but a push that fails must not keep proposals from arriving: the pull
         // still runs and the push failure is reported afterwards.
         var pushed = 0
-        val refused = mutableListOf<String>()
+        val refused = linkedMapOf<String, String>() // event id → reason, so a retried refusal counts once
         val pushFailure = try {
-            // An empty push is a cheap probe of the server's latest cursor. If it is behind ours
-            // the server was reset or restored from an older backup: pull from the start and
-            // offer it the whole log again.
-            val latest = transport.push(server, token, PushRequest(emptyList())).cursor
-            if (latest < cursor) {
+            if (cursor > 0 && serverWasReset(server, token, cursor, cursorEventId)) {
+                // Reset, or restored from an older backup: pull from the start and offer it the
+                // whole log again. Unpushed first: if the round stops in between, the next one
+                // still sees the old cursor and detects the reset again.
+                withContext(NonCancellable) {
+                    repository.markAllUnpushed()
+                    settings.update { it.copy(syncCursor = 0, syncCursorEventId = null) }
+                }
                 cursor = 0
-                settings.update { it.copy(syncCursor = 0) }
-                repository.markAllUnpushed()
+                cursorEventId = null
             }
             // Edits made while a round runs are picked up by another pass (sync work is KEEP,
             // so a running round is never cancelled by a newer request).
-            repeat(MAX_PUSH_PASSES) {
+            for (pass in 1..MAX_PUSH_PASSES) {
                 val n = pushAll(server, token, refused)
                 pushed += n
-                if (n == 0) return@repeat
+                if (n == 0) break
             }
             null
         } catch (e: CancellationException) {
@@ -162,16 +171,40 @@ class SyncEngine(
             val (future, usable) = events.partition { Envelope.tooFarAhead(it, now) }
             if (usable.isNotEmpty()) pulled += repository.ingest(usable, fromServer = true).added
             if (future.isNotEmpty()) {
-                refused += "${future.size} event(s) from the server are dated in the future; check this phone's clock"
+                refused["pull"] = "${future.size} event(s) from the server are dated in the future; check this phone's clock"
                 // Don't move past them: they are pulled again next round, when the clock may be right.
                 break
             }
             cursor = r.cursor
-            settings.update { it.copy(syncCursor = cursor) }
+            cursorEventId = r.events.lastOrNull()?.event?.id ?: cursorEventId
+            settings.update { it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId) }
             if (!r.hasMore) break
         }
         if (pushFailure != null) return failure(pushFailure)
-        return SyncOutcome.Ok(pushed, pulled, refused)
+        // Edits made while pulling: send them now instead of at the next periodic sync (a
+        // newer sync request doesn't replace a running round). A failure here leaves them queued.
+        if (repository.unpushedCount() > 0) {
+            try {
+                pushed += pushAll(server, token, refused)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return failure(e)
+            }
+        }
+        return SyncOutcome.Ok(pushed, pulled, refused.values.toList())
+    }
+
+    /**
+     * Whether the server no longer has the log this phone pulled: its latest cursor is behind
+     * ours, or the event at our cursor is a different one (restored from an older backup and
+     * since overtaken by other devices' pushes). An empty push is a cheap probe of the latest.
+     */
+    private suspend fun serverWasReset(server: String, token: String, cursor: Long, cursorEventId: String?): Boolean {
+        if (transport.push(server, token, PushRequest(emptyList())).cursor < cursor) return true
+        if (cursorEventId == null) return false // pulled before ids were remembered
+        val at = transport.pull(server, token, cursor - 1, 1).events.firstOrNull()
+        return at == null || at.cursor != cursor || at.event.id != cursorEventId
     }
 
     /**
@@ -180,7 +213,7 @@ class SyncEngine(
      * which clears once the server's clock catches up. Batches stay under the server's
      * body limit by size as well as count. Returns how many events the server stored.
      */
-    private suspend fun pushAll(server: String, token: String, refused: MutableList<String>): Int {
+    private suspend fun pushAll(server: String, token: String, refused: MutableMap<String, String>): Int {
         var pushed = 0
         var afterId = ""
         while (true) {
@@ -193,7 +226,7 @@ class SyncEngine(
                 val byId = batch.associateBy { it.id }
                 pushed += batch.size - r.rejected.size
                 // Only refusals of this device's own events are worth telling the user about.
-                refused += r.rejected.filter { byId[it.id]?.deviceId == repository.deviceId }.map { it.reason }
+                r.rejected.filter { byId[it.id]?.deviceId == repository.deviceId }.forEach { refused[it.id] = it.reason }
             }
             afterId = page.last().id
             if (page.size < SyncApi.MAX_PUSH) break

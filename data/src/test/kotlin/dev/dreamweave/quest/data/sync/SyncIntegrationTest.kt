@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.dreamweave.quest.core.CoreJson
 import dev.dreamweave.quest.core.Decision
+import dev.dreamweave.quest.core.Event
 import dev.dreamweave.quest.core.Ids
 import dev.dreamweave.quest.core.ProposalStatus
 import dev.dreamweave.quest.core.QuestStatus
@@ -21,6 +22,7 @@ import dev.dreamweave.quest.protocol.PairResponse
 import dev.dreamweave.quest.protocol.PullResponse
 import dev.dreamweave.quest.protocol.PushRequest
 import dev.dreamweave.quest.protocol.PushResponse
+import dev.dreamweave.quest.protocol.ServerEvent
 import dev.dreamweave.quest.server.Config
 import dev.dreamweave.quest.server.Secrets
 import dev.dreamweave.quest.server.Services
@@ -43,6 +45,7 @@ import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -262,6 +265,50 @@ class SyncIntegrationTest {
         assertNull(phone.engine.pair("http://localhost", services.pairingCode(), "Pixel"))
         assertEquals(0, phone.repo.unpushedCount())
         assertTrue(services.store.state(services.config.userId).quests.values.any { it.title == "Written before the restore" })
+    }
+
+    /** A minimal sync server in memory (cursor = position in the log), which can be "restored" to an older backup. */
+    private class MemoryServer : SyncTransport {
+        val log = mutableListOf<Event>()
+        override suspend fun pair(server: String, request: PairRequest) = PairResponse("token-${request.deviceId}", "Test", "user")
+        override suspend fun push(server: String, token: String, request: PushRequest): PushResponse {
+            val fresh = request.events.filter { e -> log.none { it.id == e.id } }.distinctBy { it.id }
+            log += fresh
+            return PushResponse(accepted = fresh.size, duplicates = request.events.size - fresh.size, cursor = log.size.toLong())
+        }
+        override suspend fun pull(server: String, token: String, after: Long, limit: Int): PullResponse {
+            val page = log.withIndex().drop(after.toInt()).take(limit).map { (i, e) -> ServerEvent(i + 1L, e) }
+            return PullResponse(page, page.lastOrNull()?.cursor ?: after, after + page.size < log.size)
+        }
+        fun restoreBackup(keep: Int) = repeat(log.size - keep) { log.removeAt(log.lastIndex) }
+    }
+
+    @Test
+    fun serverRestoredFromOlderBackup_andOvertaken_getsThePhonesLogAgain() = runBlocking {
+        val server = MemoryServer()
+        val phone = Phone(server)
+        assertNull(phone.engine.pair("https://quests.example.com", "CODE", "Pixel"))
+        listOf("Water the plants", "Call mum", "Fix the bike").forEach { phone.actions.capture(it) }
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        val phoneEvents = phone.db.events().all().map { it.id }.toSet()
+        assertTrue(server.log.map { it.id }.containsAll(phoneEvents))
+        val pulledTo = phone.settings.current().syncCursor
+        assertEquals(server.log.size.toLong(), pulledTo)
+
+        // The server comes back from an older backup, and another device pushes past our cursor.
+        server.restoreBackup(keep = 1)
+        val tablet = Phone(server)
+        assertNull(tablet.engine.pair("https://quests.example.com", "CODE", "Tablet"))
+        repeat(pulledTo.toInt() + 2) { tablet.actions.capture("Tablet idea $it") }
+        assertIs<SyncOutcome.Ok>(tablet.engine.sync())
+        assertTrue(server.log.size > pulledTo)
+
+        // The phone notices (the event at its cursor is a different one) and re-uploads everything.
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        assertTrue(server.log.map { it.id }.containsAll(phoneEvents))
+        assertEquals(0, phone.repo.unpushedCount())
+        assertTrue(phone.repo.current().quests.values.any { it.title == "Tablet idea 0" })
+        assertEquals(server.log.size.toLong(), phone.settings.current().syncCursor)
     }
 
     @Test

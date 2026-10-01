@@ -35,6 +35,8 @@ data class AppSettings(
     val notificationPermissionAsked: Boolean = false,
     val serverUrl: String? = null,
     val syncCursor: Long = 0,
+    /** Id of the event at [syncCursor] on the server: a different one there means the server was reset or restored. */
+    val syncCursorEventId: String? = null,
     val lastSyncAt: Long? = null,
     val lastSyncError: String? = null,
 )
@@ -57,49 +59,18 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val notifAsked = booleanPreferencesKey("notification_permission_asked")
         val serverUrl = stringPreferencesKey("server_url")
         val syncCursor = longPreferencesKey("sync_cursor")
+        val syncCursorEventId = stringPreferencesKey("sync_cursor_event_id")
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncError = stringPreferencesKey("last_sync_error")
     }
 
-    val settings: Flow<AppSettings> = store.data.map { p ->
-        AppSettings(
-            theme = p[K.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
-            digestEnabled = p[K.digestEnabled] ?: true,
-            digestMinutes = p[K.digestMinutes] ?: (8 * 60),
-            streakGuardEnabled = p[K.guardEnabled] ?: true,
-            streakGuardMinutes = p[K.guardMinutes] ?: (21 * 60),
-            vaultUri = p[K.vaultUri],
-            lastVaultSnapshotAt = p[K.lastVaultSnapshotAt],
-            onboardingDone = p[K.onboardingDone] ?: false,
-            resumeDismissedAt = p[K.resumeDismissedAt] ?: 0,
-            notificationPermissionAsked = p[K.notifAsked] ?: false,
-            serverUrl = p[K.serverUrl],
-            syncCursor = p[K.syncCursor] ?: 0,
-            lastSyncAt = p[K.lastSyncAt],
-            lastSyncError = p[K.lastSyncError],
-        )
-    }
+    val settings: Flow<AppSettings> = store.data.map(::read)
 
     suspend fun current(): AppSettings = settings.first()
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         store.edit { p ->
-            val old = AppSettings(
-                theme = p[K.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
-                digestEnabled = p[K.digestEnabled] ?: true,
-                digestMinutes = p[K.digestMinutes] ?: (8 * 60),
-                streakGuardEnabled = p[K.guardEnabled] ?: true,
-                streakGuardMinutes = p[K.guardMinutes] ?: (21 * 60),
-                vaultUri = p[K.vaultUri],
-                lastVaultSnapshotAt = p[K.lastVaultSnapshotAt],
-                onboardingDone = p[K.onboardingDone] ?: false,
-                resumeDismissedAt = p[K.resumeDismissedAt] ?: 0,
-                notificationPermissionAsked = p[K.notifAsked] ?: false,
-                serverUrl = p[K.serverUrl],
-                syncCursor = p[K.syncCursor] ?: 0,
-                lastSyncAt = p[K.lastSyncAt],
-                lastSyncError = p[K.lastSyncError],
-            )
+            val old = read(p)
             val n = transform(old)
             p[K.theme] = n.theme.name
             p[K.digestEnabled] = n.digestEnabled
@@ -113,8 +84,27 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             p[K.notifAsked] = n.notificationPermissionAsked
             if (n.serverUrl != null) p[K.serverUrl] = n.serverUrl else p.remove(K.serverUrl)
             p[K.syncCursor] = n.syncCursor
+            if (n.syncCursorEventId != null) p[K.syncCursorEventId] = n.syncCursorEventId else p.remove(K.syncCursorEventId)
             if (n.lastSyncAt != null) p[K.lastSyncAt] = n.lastSyncAt else p.remove(K.lastSyncAt)
             if (n.lastSyncError != null) p[K.lastSyncError] = n.lastSyncError else p.remove(K.lastSyncError)
         }
     }
+
+    private fun read(p: Preferences) = AppSettings(
+        theme = p[K.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
+        digestEnabled = p[K.digestEnabled] ?: true,
+        digestMinutes = p[K.digestMinutes] ?: (8 * 60),
+        streakGuardEnabled = p[K.guardEnabled] ?: true,
+        streakGuardMinutes = p[K.guardMinutes] ?: (21 * 60),
+        vaultUri = p[K.vaultUri],
+        lastVaultSnapshotAt = p[K.lastVaultSnapshotAt],
+        onboardingDone = p[K.onboardingDone] ?: false,
+        resumeDismissedAt = p[K.resumeDismissedAt] ?: 0,
+        notificationPermissionAsked = p[K.notifAsked] ?: false,
+        serverUrl = p[K.serverUrl],
+        syncCursor = p[K.syncCursor] ?: 0,
+        syncCursorEventId = p[K.syncCursorEventId],
+        lastSyncAt = p[K.lastSyncAt],
+        lastSyncError = p[K.lastSyncError],
+    )
 }

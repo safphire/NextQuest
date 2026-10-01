@@ -441,16 +441,23 @@ A refusal is final: the event is marked and never blocks the queue. The one
 exception is "dated in the future", which waits for the server's clock to
 catch up. Only refusals of this device's own events are shown to the user.
 
-If a push response's cursor is behind ours, the server was reset, and we pull
-from 0.
+Each round first checks that the server still has the log this phone pulled.
+The server was reset or restored from an older backup if its latest cursor
+is behind ours, or if the event at our cursor is a different one (other
+devices pushed past ours after a restore). In either case the phone marks
+its whole log unpushed (before it saves cursor 0, so an interrupted round
+detects the reset again), re-uploads it and pulls from 0. A refusal repeated
+over several push passes is reported once. A reply the app can't decode
+isn't retried: it means the app and server versions don't match.
 
 ### D-602 · When sync runs
 WorkManager runs sync, always with a network constraint and exponential
 backoff from 30 s:
 - every 15 minutes while paired (WorkManager's minimum);
 - when the app opens;
-- 5 s after a local change. This is debounced: a newer request replaces a
-  pending one.
+- 5 s after a local change. A newer request never replaces a round that is
+  already running (KEEP). The round itself picks up edits made meanwhile:
+  up to three push passes, and one more push after the pull.
 
 A 401 (device removed on the server) stops retrying and asks the user to pair
 again. Disconnecting deletes nothing. Pairing with a server marks the whole
