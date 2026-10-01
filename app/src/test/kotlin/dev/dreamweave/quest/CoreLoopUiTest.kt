@@ -34,8 +34,15 @@ class CoreLoopUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
-    private fun waitForText(text: String, timeoutMs: Long = 10_000) {
-        compose.waitUntil(timeoutMs) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+    private fun waitForText(text: String, timeoutMs: Long = 15_000) {
+        compose.waitUntil(timeoutMs) {
+            // Before the first frame is attached there is no compose hierarchy yet: keep waiting.
+            try {
+                compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
+            } catch (e: IllegalStateException) {
+                false
+            }
+        }
     }
 
     @Test

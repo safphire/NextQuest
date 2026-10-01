@@ -124,3 +124,12 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.kotlin.test)
 }
+
+// Full stack traces of failing tests in the console (CI logs are the only window into them).
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStandardStreams = false
+    }
+}
