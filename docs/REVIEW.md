@@ -263,3 +263,44 @@ cap via sync/MCP PASS by design.
 | Pairing in the UI's coroutine scope | minor | FIXED: app scope, local writes NonCancellable |
 | Integration test doesn't cover WorkManager, the cap via sync, future refusals | minor | Known gap (cap via sync is covered by the core property test) |
 | Nits: substring match on "future", pair link while paired, `commit()` on main, imports don't trigger sync | nit | Pair link while paired FIXED (ignored with a message); others accepted |
+
+### Round 2 (fresh reviewer, head 5d2e244) — CHANGES NEEDED
+All nine round-1 findings verified fixed (schema committed and regenerated in
+CI, migration matches the entity, reconcile at startup, reset probe, size
+limited batches, pull after a failed push, 401 forgets and cancels, KEEP,
+pairing NonCancellable, token excluded from backups).
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Reset handling saves cursor 0 before marking the log unpushed; a round cancelled in between never detects the reset again | major | FIXED: unpushed first, then cursor, both NonCancellable |
+| A server restored from an older backup and overtaken by other devices' pushes is not detected | minor | FIXED: the phone remembers the id of the event at its cursor and checks it each round; integration test for restored-and-overtaken |
+| `return@repeat` doesn't stop push passes; a "future" refusal is counted three times | minor | FIXED: loop breaks when a pass sends nothing; refusals keyed by event id |
+| With KEEP, an edit made during the pull waits for the periodic sync | minor | FIXED: one more push after the pull when anything is queued |
+| D-601/D-602 don't describe KEEP and the reset rule | nit | FIXED |
+| An undecodable reply reads "Can't reach the server" and is retried | nit | FIXED: reported as a version mismatch, not retried |
+
+## P7 — Polish
+
+### Round 1 (independent reviewer, head 5d2e244) — CHANGES NEEDED
+Verified: SPDX headers on every source file; CONTRIBUTING requires the CLA;
+touch targets and labels; empty states on every screen; MCP_TOOLS.md matches
+the tool specs; the release workflow leaks nothing and no-ops without secrets;
+DEVICE_TEST covers the spec's acceptance items.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| A failed load (or a failed action) crashes the app instead of showing an error state | major | FIXED: "Try again" screen for load failures; failed actions show a calm message |
+| `ALLOWED_ORIGINS` isn't passed through by compose | minor | FIXED, plus blank now means the defaults (an empty value would have blocked Claude and ChatGPT); ConfigTest |
+| Capture/next-step fields accept text past the 500/2,000 limits, which is then refused after the panel closed | minor | FIXED: capped while typing |
+| DEVICE_TEST misses the D-201 panel checks, Android restore and server restore | minor | FIXED |
+| Product name literals outside `app_name` / `APP_NAME` | nit | FIXED: one `Config.APP_NAME_DEFAULT` |
+| BottomPanel has no pane title for TalkBack | nit | FIXED |
+| Unreachable "Complete quest?" branch in What's next | nit | FIXED: removed |
+| Release job skips wrapper validation; actions pinned by tag | nit | Wrapper validation added; tag pinning accepted (same as CI) |
+
+### Found by CI on the emulator and Robolectric
+| Finding | Resolution |
+|---|---|
+| Capture sheet stayed on screen after a quick save (API 34 emulator, core-loop test) | FIXED: capture and What's next are a plain bottom dialog (D-201); the test asserts both close |
+| A fired step reminder was taken down by a stale snapshot | FIXED: stale cleanup judges against the latest state (e7d2be3) |
+| ReminderIntegrityTest failed at random | Root cause: Robolectric keeps notifications in static state, and the previous test's app scope was still refreshing against its own repository. Test apps now stop their background work in @After |
