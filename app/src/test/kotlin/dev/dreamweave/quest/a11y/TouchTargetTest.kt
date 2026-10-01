@@ -68,13 +68,14 @@ class TouchTargetTest {
     fun mainScreens_haveNoTouchTargetUnder48dp() {
         // Off the main thread, then pumped: blocking the main thread would deadlock with the
         // view model, whose coroutines resume on it while holding the repository lock.
-        val setup = container.appScope.launch {
-            val actions = container.actions
+        val c = container // compose.activity may only be touched on the main thread
+        val setup = c.appScope.launch {
+            val actions = c.actions
             actions.capture("Write the talk")
             actions.capture("Fix the bike")
-            val talk = container.repository.current().quests.values.first { it.title == "Write the talk" }.id
+            val talk = c.repository.current().quests.values.first { it.title == "Write the talk" }.id
             actions.track(talk, firstStep = "Outline three points")
-            container.settings.update { it.copy(onboardingDone = true) }
+            c.settings.update { it.copy(onboardingDone = true) }
         }
         compose.waitUntil(15_000) { setup.isCompleted }
         val problems = mutableMapOf<String, List<String>>()

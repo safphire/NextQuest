@@ -2,6 +2,8 @@
 package dev.dreamweave.quest
 
 import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.printToString
@@ -64,6 +66,14 @@ class CoreLoopUiTest {
         compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
     }
 
+    /** The single on-screen node matching [matcher] (Robolectric keeps closed sheets composed off-screen). */
+    private fun onScreen(matcher: SemanticsMatcher): SemanticsNodeInteraction {
+        val height = compose.onAllNodes(isRoot()).fetchSemanticsNodes().maxOf { it.boundsInRoot.bottom }
+        val ids = compose.onAllNodes(matcher).fetchSemanticsNodes().filter { it.boundsInRoot.top < height }.map { it.id }
+        val id = ids.singleOrNull() ?: throw AssertionError("Expected one on-screen ${matcher.description}, found ${ids.size}")
+        return compose.onNode(matcher and SemanticsMatcher("node $id") { it.id == id })
+    }
+
     @Test
     fun freshInstall_capture_track_done_nextStep_offlineUnder30s() {
         val started = System.nanoTime()
@@ -81,14 +91,15 @@ class CoreLoopUiTest {
         // Never runBlocking on the main thread here: a commit started from the UI holds the
         // repository lock and resumes on this very thread (deadlock). Read the state flow.
         waitFor("the capture to reach the event log") { repository.state.value?.quests?.isNotEmpty() == true }
-        waitFor("the capture sheet to close") { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isEmpty() }
+        // (Under Robolectric the closed sheet's dialog window lingers off-screen, so don't wait
+        // for it to disappear; on a device it is gone — DEVICE_TEST.md §1.)
 
         // Board → Track → first step.
         compose.onNodeWithText("Open Board").performClick()
         waitForText("Write the talk")
         compose.onNodeWithText("Track").performClick()
         waitForText("First step")
-        compose.onNode(hasSetTextAction() and hasAnyAncestor(isDialog())).performTextInput("Outline three points")
+        onScreen(hasSetTextAction() and hasAnyAncestor(isDialog())).performTextInput("Outline three points")
         compose.onNode(hasText("Track") and hasAnyAncestor(isDialog())).performClick()
 
         // Today shows the single next step; Done → What's next? → set it.
@@ -96,7 +107,7 @@ class CoreLoopUiTest {
         waitForText("Outline three points")
         compose.onNodeWithText("Done · +15 XP").performClick()
         waitForText("What's next?")
-        compose.onNode(hasSetTextAction()).performTextInput("Draft the intro")
+        onScreen(hasSetTextAction()).performTextInput("Draft the intro")
         compose.onNodeWithText("Set next step").performClick()
         waitForText("Draft the intro")
         compose.onNodeWithText("Draft the intro").assertIsDisplayed()
