@@ -151,9 +151,13 @@ round-2 review showed that let a local edit sort *before* the remote quest it
 was made on, so it vanished on refold.) Clock sanity is handled where it
 matters to the user instead: streaks and "done at" use each completion's own
 local stamp (D-108), stamps whose day doesn't match their instant are ignored,
-and days after "today" never count toward the current streak. A fast peer can
-only skew ordering metadata such as "recently touched". As a safety net, a
-local commit that would sort before already-applied events is refused.
+and days after "today" never count toward the current streak. To keep a fast
+peer from dragging everyone else along, every ingestion point — the sync
+server on push, the app on pull, snapshot import — refuses events more than
+24 hours ahead of its own clock (the device with the wrong clock sees a sync
+error instead), and the fold refuses timestamps beyond the year 9999. As a
+safety net, a local commit that would sort before already-applied events is
+refused.
 
 ### D-113 · Proposal rules re-checked at accept time
 `ProposalRules.decide` re-runs the proposal validation on the (possibly

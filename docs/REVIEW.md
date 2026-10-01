@@ -96,3 +96,24 @@ New issues and resolution:
   data; an untrusted server could forge anything anyway); a device that resets
   its sequence while keeping its id loses those events (device ids are
   excluded from backup, so this needs deliberate tampering).
+
+**Round 3** (independent reviewer with probe tests, commit `16199ba`)
+
+| Item | Verdict |
+|---|---|
+| N1 causality | FIXED (peer ahead by 10 min / 1 day / 1 year; 20 shuffled refolds each) |
+| N2 streak | FIXED |
+| Source chip spoof | FIXED |
+| Accept-time filtering by code | FIXED |
+| Clock overflow / own order | FIXED (saturates, own events stay ordered under ±1 h jitter) |
+| ±2 min concurrency, 3 devices × 80 rounds | Converges |
+
+Remaining issues and resolution:
+- MEDIUM — a far-future peer still skewed user-visible dates (Chronicle,
+  resume card) → ingestion points refuse events > 24 h ahead of their clock
+  (`Envelope.tooFarAhead`; enforced in the sync server, sync pull and import).
+- MEDIUM — one event at `ts = Long.MAX_VALUE` could block a device's writes
+  forever → envelope refuses timestamps beyond 9999-12-31.
+- LOW — stored client name untrimmed → trimmed.
+
+P1 closed after three rounds; no open HIGH or MEDIUM items.

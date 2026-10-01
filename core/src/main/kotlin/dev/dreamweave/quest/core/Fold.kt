@@ -187,6 +187,12 @@ class Folder(val tz: TimeZone) {
 
     fun apply(event: Event): Outcome {
         if (!seenIds.add(event.id)) return Outcome.Skipped("duplicate event") // idempotent; not recorded
+        // A malformed envelope never touches state, so it must not move the ordering marker
+        // either (an absurd timestamp would otherwise force refolds and block local commits).
+        Envelope.problem(event)?.let { reason ->
+            skipped += SkippedEvent(event.id, event.type, event.actor, reason)
+            return Outcome.Skipped(reason)
+        }
         val tx = Tx(event)
         val reason = try {
             checkEnvelope(event)
@@ -233,10 +239,7 @@ class Folder(val tz: TimeZone) {
         Events.decode(serializer, event.payload) ?: throw Reject("malformed payload")
 
     private fun checkEnvelope(event: Event) {
-        if (!Ids.isValid(event.id)) throw Reject("event id is not a UUIDv7")
-        if (!Ids.isValid(event.deviceId)) throw Reject("device id is not a UUIDv7")
-        if (event.seq < 1) throw Reject("sequence number must be positive")
-        if (event.ts <= 0) throw Reject("timestamp must be positive")
+        Envelope.problem(event)?.let { throw Reject(it) }
         if ("${event.deviceId}#${event.seq}" in deviceSeqs) throw Reject("sequence number reused by another event")
     }
 
@@ -544,7 +547,7 @@ class Folder(val tz: TimeZone) {
             if (ProposalSource.fromClientName(p.client) != p.source) throw Reject("proposal source does not match the client")
             put(
                 Proposal(
-                    id = p.proposalId, source = p.source, client = p.client, createdAt = ts,
+                    id = p.proposalId, source = p.source, client = p.client.trim(), createdAt = ts,
                     op = p.op, payload = p.payload, reason = p.reason?.trim()?.ifEmpty { null },
                 ),
             )
@@ -615,6 +618,35 @@ class Folder(val tz: TimeZone) {
             for ((id, p) in proposalBefore) if (p == null) proposals.remove(id) else proposals[id] = p
             cap = capBefore
         }
+    }
+}
+
+/** Structural checks on an event envelope, shared by the fold, imports and the sync server. */
+object Envelope {
+    const val MAX_TYPE = 64
+    const val MAX_ACTOR = 128
+
+    /** 9999-12-31T23:59:59.999Z — anything later is a broken clock, not a date. */
+    const val MAX_TS = 253_402_300_799_999L
+
+    /**
+     * Ingestion points (sync push and pull, snapshot import) refuse events more than this
+     * far ahead of their own clock, so one device with a wrong clock can't drag everyone's
+     * timestamps — and the dates shown from them — into the future.
+     */
+    const val FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000L
+
+    fun tooFarAhead(event: Event, nowMs: Long): Boolean = event.ts > nowMs + FUTURE_TOLERANCE_MS
+
+    fun problem(event: Event): String? = when {
+        !Ids.isValid(event.id) -> "event id is not a UUIDv7"
+        !Ids.isValid(event.deviceId) -> "device id is not a UUIDv7"
+        event.seq < 1 -> "sequence number must be positive"
+        event.ts <= 0 -> "timestamp must be positive"
+        event.ts > MAX_TS -> "timestamp is out of range"
+        event.type.isBlank() || event.type.length > MAX_TYPE -> "event type is missing or too long"
+        event.actor.isBlank() || event.actor.length > MAX_ACTOR -> "actor is missing or too long"
+        else -> null
     }
 }
 
