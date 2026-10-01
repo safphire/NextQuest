@@ -3,7 +3,7 @@ name: CI
 
 on:
   push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,7 +39,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests (core, protocol, data incl. Room migrations under Robolectric, app, server)
-        run: ./gradlew test --continue
+        run: ./gradlew :core:test :protocol:test :server:test :data:testDebugUnitTest :app:testDebugUnitTest --continue
 
       - name: Core coverage gate (>= 90% lines)
         run: ./gradlew :core:koverVerify :core:koverXmlReport

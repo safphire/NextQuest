@@ -10,5 +10,7 @@ import kotlin.test.assertNotNull
 
 @RunWith(AndroidJUnit4::class)
 class PlaceholderTest {
-    @Test fun robolectricBoots() = assertNotNull(ApplicationProvider.getApplicationContext<Context>())
+    @Test fun robolectricBoots() {
+        assertNotNull(ApplicationProvider.getApplicationContext<Context>())
+    }
 }
