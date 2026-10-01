@@ -21,6 +21,16 @@ passwords). Every push is scanned in CI (`secrets` job in
 - **Scope:** all refs after the v1 reset (9 commits). **Findings:** none.
 - CI now runs gitleaks v8.30.1 pinned by image digest on every push.
 
+### 2026-10-01 — final v1 scan (head `153fb02`)
+
+- **Tool:** gitleaks v8.30.1, `gitleaks git --log-opts="--all" --redact`
+- **Scope:** every ref, 43 commits (~1.2 MB), including the 7 M0 commits
+  (`cba381f` … `164ebcd`) on `claude/nextquest-android-setup-jpaq1n`.
+- **Findings:** none. `no leaks found`.
+- **Manual review:** `.env.example` holds no values for secrets
+  (`ADMIN_PASSWORD=` is empty); the CI `docker` job generates its password at
+  run time; the release workflow reads the keystore only from Actions secrets.
+
 ## What is sensitive in this project
 
 | Secret | Where it lives | Never in |
