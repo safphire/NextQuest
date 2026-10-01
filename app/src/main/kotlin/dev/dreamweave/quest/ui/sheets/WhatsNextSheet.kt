@@ -49,15 +49,18 @@ fun WhatsNextSheet(
     onConfirm: (nextStep: String?, finishOwner: Boolean) -> Unit,
 ) {
     val c = Quest.colors
-    var finishing by rememberSaveable { mutableStateOf(false) }
+    var finishingSaved by rememberSaveable { mutableStateOf(false) }
     var text by rememberSaveable { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     if (state.steps[stepId] == null) {
         LaunchedEffect(stepId) { onCancel() }
         return
     }
-    val plan = remember(state, stepId, finishing) { Completion.plan(state, stepId, finishing) }
     val finishPlan = remember(state, stepId) { Completion.plan(state, stepId, true) }
+    // "Finish the subquest, then name the next step" only applies to subquests; a restored flag
+    // whose step now belongs to a top-level quest is ignored (that one completes directly).
+    val finishing = finishingSaved && !finishPlan.ownerIsRoot
+    val plan = remember(state, stepId, finishing) { Completion.plan(state, stepId, finishing) }
     val stepText = state.steps.getValue(stepId).text
     // nextOwnerId is null only when finishing a top-level quest, which this panel completes directly.
     val nextOwner = state.quests.getValue(plan.nextOwnerId ?: plan.rootId)
@@ -112,7 +115,7 @@ fun WhatsNextSheet(
                         if (finishPlan.ownerIsRoot || !finishPlan.nextRequired) {
                             closeThen { onConfirm(null, true) }
                         } else {
-                            finishing = true
+                            finishingSaved = true
                             text = ""
                         }
                     },

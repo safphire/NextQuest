@@ -3,9 +3,11 @@ package dev.dreamweave.quest.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -41,7 +43,12 @@ data class AppSettings(
     val lastSyncError: String? = null,
 )
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+// A corrupt settings file resets settings rather than crashing every launch. The quest log
+// and the sync token live elsewhere, so nothing but preferences is lost.
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 class SettingsStore(private val store: DataStore<Preferences>) {
     constructor(context: Context) : this(context.applicationContext.dataStore)

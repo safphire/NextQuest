@@ -63,7 +63,7 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
     /** A user action that failed unexpectedly (storage full, database error) gets a calm message, never a crash. */
     private val failures = CoroutineExceptionHandler { _, e ->
         Log.e(TAG, "action failed", e)
-        message("That didn't work — nothing was changed. Try again; if it keeps happening, restart the app.")
+        message("That didn't work. Try again; if it keeps happening, restart the app.")
     }
 
     init {

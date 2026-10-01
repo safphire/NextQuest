@@ -305,3 +305,17 @@ DEVICE_TEST covers the spec's acceptance items.
 | A fired step reminder was taken down by a stale snapshot | FIXED: stale cleanup judges against the latest state (e7d2be3) |
 | ReminderIntegrityTest failed at random | Root cause: Robolectric keeps notifications in static state, and the previous test's app scope was still refreshing against its own repository. Test apps now stop their background work in @After |
 | First-step dialog kept an empty field on the emulator, so Track stayed disabled | FIXED: TextPromptDialog requests focus from inside the dialog's own composition; the core-loop test waits for typed text and enabled buttons. Green on the emulator at 5d88d2e |
+
+## Final verification (fresh reviewer, head 5d88d2e)
+**P6 round 3: PASS. P7 round 2: PASS. P2, P3, P5: PASS** (no regressions).
+Every P6 round-2 and P7 round-1 fix was verified in code. The reviewer traced the
+restored-and-overtaken integration test: it fails before the fix and passes after.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| A restore that lands between the last pull and later pushes isn't detected, so those events stay marked pushed | minor | Known issue (next: a pushed-through watermark from `PushResponse.cursor`) |
+| Unguarded launches: settings flow on a corrupt DataStore, SyncSection's count, AlarmActivity / WidgetDoneActivity actions | minor | Corrupt DataStore FIXED (`ReplaceFileCorruptionHandler`); the others are a known issue |
+| `pair()` saved the token before marking the log unpushed | nit | FIXED: unpushed first |
+| Failure message says "nothing was changed" even after a commit | nit | FIXED: neutral wording |
+| A restored "finishing" flag for a step that now belongs to a top-level quest | nit | FIXED: ignored for top-level quests |
+| `ALLOWED_ORIGINS=" , "` yields an empty allow-list | nit | FIXED: falls back to the defaults; ConfigTest |

@@ -56,7 +56,7 @@ data class Config(
                 timeZone = env["TZ"]?.takeIf { it.isNotBlank() }?.let { runCatching { TimeZone.of(it) }.getOrNull() } ?: TimeZone.currentSystemDefault(),
                 mcpCallsPerMinute = env["MCP_CALLS_PER_MINUTE"]?.toIntOrNull() ?: 60,
                 proposalsPerHour = env["PROPOSALS_PER_HOUR"]?.toIntOrNull() ?: 30,
-                allowedOrigins = env["ALLOWED_ORIGINS"]?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim().trimEnd('/') }?.filter { it.isNotEmpty() }?.toSet()
+                allowedOrigins = env["ALLOWED_ORIGINS"]?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim().trimEnd('/') }?.filter { it.isNotEmpty() }?.toSet()?.takeIf { it.isNotEmpty() }
                     ?: setOf("https://claude.ai", "https://chatgpt.com"),
                 trustProxy = env["TRUST_PROXY"]?.trim()?.takeIf { it.isNotEmpty() }?.let { v ->
                     v.toIntOrNull() ?: error("TRUST_PROXY must be a number of proxy hops (0 = no proxy), got '$v'")

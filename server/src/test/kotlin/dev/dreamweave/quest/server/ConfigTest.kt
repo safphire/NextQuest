@@ -13,6 +13,8 @@ class ConfigTest {
         val c = Config.fromEnv(base + mapOf("APP_NAME" to "", "ALLOWED_ORIGINS" to "", "TRUST_PROXY" to ""))
         assertEquals(Config.APP_NAME_DEFAULT, c.appName)
         assertEquals(setOf("https://claude.ai", "https://chatgpt.com"), c.allowedOrigins)
+        // Only separators: still the defaults, never an empty allow-list that blocks everyone.
+        assertEquals(c.allowedOrigins, Config.fromEnv(base + ("ALLOWED_ORIGINS" to " , ")).allowedOrigins)
     }
 
     @Test

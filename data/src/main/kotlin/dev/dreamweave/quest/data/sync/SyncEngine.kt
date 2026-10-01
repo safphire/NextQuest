@@ -61,10 +61,11 @@ class SyncEngine(
             return@withLock "Can't reach $server. Check the address and your connection."
         }
         withContext(NonCancellable) {
+            // A (new) server has none of this device's events yet. Marked first: if the process
+            // dies before the token is saved, the phone is simply not paired yet.
+            repository.markAllUnpushed()
             tokens.token = response.token
             settings.update { it.copy(serverUrl = server, syncCursor = 0, syncCursorEventId = null, lastSyncAt = null, lastSyncError = null) }
-            // A (new) server has none of this device's events yet.
-            repository.markAllUnpushed()
         }
         null
     }.also { if (it == null) sync() }
