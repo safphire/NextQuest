@@ -51,6 +51,7 @@ import dev.dreamweave.quest.core.BoardSort
 import dev.dreamweave.quest.core.BoardTab
 import dev.dreamweave.quest.core.Quest as QuestModel
 import dev.dreamweave.quest.core.QuestState
+import dev.dreamweave.quest.core.QuestStatus
 import dev.dreamweave.quest.core.Views
 import dev.dreamweave.quest.ui.QuestViewModel
 import dev.dreamweave.quest.ui.RootActions
@@ -80,7 +81,8 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
     val laterCount = remember(state) { Views.board(state, BoardTab.LATER).size }
 
     fun startTrack(q: QuestModel) {
-        val hasStep = state.openStep(q.id) != null
+        // The step the quest would show once tracked (a focused subquest's, if any).
+        val hasStep = state.effectiveStep(q.id) != null
         trackFlow = TrackFlow(q.id, step = null, needsSwap = state.freeSlots == 0)
         if (hasStep && state.freeSlots > 0) {
             trackFlow = null
@@ -165,7 +167,7 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
                     onTrack = { startTrack(q) },
                     onMove = { vm.run { if (tab == BoardTab.INBOX) park(q.id) else toInbox(q.id) } },
                     onDrop = {
-                        vm.run(onOk = { vm.message("Dropped “${q.title}”", "Undo") { vm.run { restore(q.id) } } }) { drop(q.id) }
+                        vm.run(onOk = { vm.message("Dropped “${q.title}”", "Undo") { vm.run { restore(q.id, if (tab == BoardTab.LATER) QuestStatus.LATER else QuestStatus.INBOX) } } }) { drop(q.id) }
                     },
                 )
             }
@@ -176,7 +178,7 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
         val q = state.quests[flow.questId]
         when {
             q == null -> trackFlow = null
-            state.openStep(q.id) == null && flow.step == null -> TextPromptDialog(
+            state.effectiveStep(q.id) == null && flow.step == null -> TextPromptDialog(
                 title = "First step",
                 message = "A tracked quest always shows its next step. What's the first one for “${q.title}”?",
                 confirmLabel = if (flow.needsSwap) "Next" else "Track",
@@ -216,7 +218,7 @@ private fun BoardItem(
     onDrop: () -> Unit,
 ) {
     val c = Quest.colors
-    val step = state.openStep(quest.id)
+    val step = state.effectiveStep(quest.id)
     val kids = state.children(quest.id).size
     QuestCard(onClick = onOpen, onClickLabel = "Open quest") {
         Column {

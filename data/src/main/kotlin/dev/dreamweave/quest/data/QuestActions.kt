@@ -70,18 +70,23 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
     suspend fun track(questId: String, firstStep: String? = null, parkQuestId: String? = null): CommitResult {
         val events = mutableListOf<PendingEvent>()
         parkQuestId?.let { events += Events.questStatusSet(QuestStatusSet(it, QuestStatus.LATER)) }
-        val next = firstStep?.trim()?.takeIf { it.isNotEmpty() }?.let { NextStep(id(), questId, it) }
+        // The step belongs to whoever shows it: the focused subquest, if there is one.
+        val owner = repo.current().effectiveStepOwner(questId)?.id ?: questId
+        val next = firstStep?.trim()?.takeIf { it.isNotEmpty() }?.let { NextStep(id(), owner, it) }
         events += Events.questStatusSet(QuestStatusSet(questId, QuestStatus.TRACKED, next))
         return repo.commit(events)
     }
 
     /** Track several quests at once (first launch), each with its first step. */
-    suspend fun trackMany(firstSteps: Map<String, String>): CommitResult =
-        repo.commit(
+    suspend fun trackMany(firstSteps: Map<String, String>): CommitResult {
+        val state = repo.current()
+        return repo.commit(
             firstSteps.map { (questId, step) ->
-                Events.questStatusSet(QuestStatusSet(questId, QuestStatus.TRACKED, NextStep(id(), questId, step)))
+                val owner = state.effectiveStepOwner(questId)?.id ?: questId
+                Events.questStatusSet(QuestStatusSet(questId, QuestStatus.TRACKED, NextStep(id(), owner, step)))
             },
         )
+    }
 
     /**
      * First launch: every brain-dumped item becomes a quest in one commit. Items with a
@@ -108,7 +113,9 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
             ),
         )
 
-    suspend fun restore(questId: String) = toInbox(questId)
+    /** Undo a drop: back to the list it was dropped from (Inbox or Later). */
+    suspend fun restore(questId: String, to: QuestStatus = QuestStatus.INBOX) =
+        commit(Events.questStatusSet(QuestStatusSet(questId, if (to == QuestStatus.LATER) QuestStatus.LATER else QuestStatus.INBOX)))
 
     suspend fun completeQuest(questId: String, nextStepText: String? = null, nextOwnerId: String? = null) =
         commit(Events.questCompleted(QuestCompleted(questId, nextOf(nextOwnerId, nextStepText))))

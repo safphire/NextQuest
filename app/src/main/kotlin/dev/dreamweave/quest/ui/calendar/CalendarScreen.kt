@@ -50,6 +50,9 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.dreamweave.quest.core.CalendarItem
@@ -131,7 +134,7 @@ fun CalendarScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) 
                     anchorIso = (if (month) anchor.plus(DatePeriod(months = 1)) else anchor.plus(DatePeriod(days = 7))).toString()
                 }) { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = if (month) "Next month" else "Next week", tint = c.text) }
             }
-            Row(Modifier.fillMaxWidth()) {
+            Row(Modifier.bleed(8.dp).fillMaxWidth()) {
                 DayOfWeek.values().forEach { d ->
                     Text(
                         d.name.take(1), style = MaterialTheme.typography.labelSmall, color = c.textSecondary,
@@ -141,10 +144,13 @@ fun CalendarScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) 
             }
             Spacer(Modifier.height(4.dp))
             var day = from
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // The grid reaches 8dp into the list padding on both sides and the cells have no gaps
+            // between them (the visible gap is inside each cell), so every day is a ≥48dp target
+            // even on a 360dp-wide phone.
+            Column(Modifier.bleed(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 while (day <= to) {
                     val weekStart = day
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth()) {
                         for (i in 0 until 7) {
                             val d = weekStart.plus(DatePeriod(days = i))
                             DayCell(
@@ -182,14 +188,15 @@ private fun DayCell(date: LocalDate, count: Int, isToday: Boolean, isSelected: B
     Column(
         modifier
             .heightIn(min = 52.dp)
-            .clip(shape)
-            .background(if (isSelected) c.violetTint else c.surface)
-            .border(1.dp, if (isToday) c.violet else c.border, shape)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics {
                 selected = isSelected
                 contentDescription = "${Format.shortDate(date)}, " + if (count == 0) "nothing scheduled" else "$count scheduled"
             }
+            .padding(2.dp)
+            .clip(shape)
+            .background(if (isSelected) c.violetTint else c.surface)
+            .border(1.dp, if (isToday) c.violet else c.border, shape)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -225,5 +232,15 @@ private fun CalendarRow(item: CalendarItem, zone: kotlinx.datetime.TimeZone, onO
                 tint = if (item.step.isDone) c.violet else c.textSecondary,
             )
         }
+    }
+}
+
+/** Widens the content by [amount] on each side, into the surrounding padding. */
+private fun Modifier.bleed(amount: Dp): Modifier = layout { measurable, constraints ->
+    val extra = (amount * 2).roundToPx()
+    val wide = constraints.copy(minWidth = constraints.minWidth + extra, maxWidth = constraints.maxWidth + extra)
+    val placeable = measurable.measure(if (constraints.hasBoundedWidth) wide else constraints)
+    layout(constraints.constrainWidth(placeable.width - extra), placeable.height) {
+        placeable.place(-amount.roundToPx(), 0)
     }
 }

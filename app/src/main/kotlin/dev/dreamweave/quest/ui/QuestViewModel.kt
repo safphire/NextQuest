@@ -59,24 +59,35 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
      * Runs one user action and turns its result into feedback: XP toast, achievement
      * toasts, the quest-complete celebration, or a calm message when it was refused.
      */
-    fun run(onOk: () -> Unit = {}, xpAlreadyShown: Long = 0, block: suspend QuestActions.() -> CommitResult) {
+    fun run(
+        onOk: () -> Unit = {},
+        xpAlreadyShown: Long = 0,
+        /** Handles a refusal itself (e.g. by asking for input); returns false to show the usual message. */
+        onRejected: (reason: String) -> Boolean = { false },
+        block: suspend QuestActions.() -> CommitResult,
+    ) {
         viewModelScope.launch {
             when (val r = actions.block()) {
                 is CommitResult.Ok -> {
-                    val before = r.change.before
-                    val after = r.change.after
-                    val finished = after.quests.values.filter {
-                        it.isRoot && it.status == QuestStatus.DONE && before.quests[it.id]?.status != QuestStatus.DONE
-                    }
-                    finished.forEach { _events.tryEmit(UiEvent.QuestCompleted(it.title, after.xp - before.xp)) }
-                    val gained = after.xp - before.xp - xpAlreadyShown
-                    if (finished.isEmpty() && gained > 0) _events.tryEmit(UiEvent.XpGained(gained))
-                    (after.achievements.keys - before.achievements.keys).forEach { _events.tryEmit(UiEvent.AchievementUnlocked(it)) }
+                    feedback(r.change.before, r.change.after, xpAlreadyShown)
                     onOk()
                 }
-                is CommitResult.Rejected -> message(humanize(r.reason))
+                is CommitResult.Rejected -> if (!onRejected(r.reason)) {
+                    message(humanize(r.reason) + if (xpAlreadyShown > 0) " No XP was added." else "")
+                }
             }
         }
+    }
+
+    /** XP, quest-complete and achievement feedback for the difference between two states. */
+    private fun feedback(before: QuestState, after: QuestState, xpAlreadyShown: Long = 0) {
+        val finished = after.quests.values.filter {
+            it.isRoot && it.status == QuestStatus.DONE && before.quests[it.id]?.status != QuestStatus.DONE
+        }
+        finished.forEach { _events.tryEmit(UiEvent.QuestCompleted(it.title, after.xp - before.xp)) }
+        val gained = after.xp - before.xp - xpAlreadyShown
+        if (finished.isEmpty() && gained > 0) _events.tryEmit(UiEvent.XpGained(gained))
+        (after.achievements.keys - before.achievements.keys).forEach { _events.tryEmit(UiEvent.AchievementUnlocked(it)) }
     }
 
     /** Runs a suspending UI task in the view model's scope (survives recomposition). */
@@ -94,8 +105,11 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
 
     fun acceptAll() {
         viewModelScope.launch {
+            val before = repo.current()
             val n = actions.acceptAll()
-            val left = repo.current().pendingProposals.size
+            val after = repo.current()
+            feedback(before, after)
+            val left = after.pendingProposals.size
             message(
                 when {
                     n == 0 && left > 0 -> "These proposals need your input — open each one."

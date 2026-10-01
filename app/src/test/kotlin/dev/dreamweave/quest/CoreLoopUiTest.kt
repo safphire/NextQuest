@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest
 
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.isDialog
@@ -34,15 +37,28 @@ class CoreLoopUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
-    private fun waitForText(text: String, timeoutMs: Long = 15_000) {
-        compose.waitUntil(timeoutMs) {
-            // Before the first frame is attached there is no compose hierarchy yet: keep waiting.
-            try {
-                compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
-            } catch (e: IllegalStateException) {
-                false
+    private val repository get() = (compose.activity.application as QuestApp).container.repository
+
+    /** Like waitUntil, but a timeout fails with the whole UI tree (CI logs are all we get). */
+    private fun waitFor(what: String, timeoutMs: Long = 15_000, condition: () -> Boolean) {
+        try {
+            compose.waitUntil(timeoutMs) {
+                // Before the first frame is attached there is no compose hierarchy yet: keep waiting.
+                try {
+                    condition()
+                } catch (e: IllegalStateException) {
+                    false
+                }
             }
+        } catch (e: ComposeTimeoutException) {
+            val tree = runCatching { compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString() }.getOrElse { "<no tree: $it>" }
+            val quests = runCatching { runBlocking { repository.current().quests.values.map { "${it.title}/${it.status}" } } }.getOrNull()
+            throw AssertionError("Timed out waiting for $what. Quests: $quests\n$tree", e)
         }
+    }
+
+    private fun waitForText(text: String, timeoutMs: Long = 15_000) = waitFor("\"$text\"", timeoutMs) {
+        compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
     }
 
     @Test
@@ -59,6 +75,8 @@ class CoreLoopUiTest {
         waitForText("Capture")
         compose.onNode(hasSetTextAction()).performTextInput("Write the talk")
         compose.onNode(hasSetTextAction()).performImeAction()
+        waitFor("the capture to reach the event log") { runBlocking { repository.current().quests.isNotEmpty() } }
+        waitFor("the capture sheet to close") { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isEmpty() }
 
         // Board → Track → first step.
         compose.onNodeWithText("Open Board").performClick()
@@ -81,7 +99,7 @@ class CoreLoopUiTest {
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         assertTrue(elapsedMs < 30_000, "core loop took ${elapsedMs}ms")
 
-        val state = runBlocking { (compose.activity.application as QuestApp).container.repository.current() }
+        val state = runBlocking { repository.current() }
         val quest = state.quests.values.single()
         assertEquals(QuestStatus.TRACKED, quest.status)
         assertEquals("Draft the intro", state.effectiveStep(quest.id)!!.text)

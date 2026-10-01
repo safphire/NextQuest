@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -224,7 +225,9 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                         } else {
                             Text(
                                 step.text, style = MaterialTheme.typography.bodyLarge, color = c.text,
-                                modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Edit step") { prompt = Prompt.EditStep(step.id, step.text) }.padding(vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .clickable(onClickLabel = "Edit step") { prompt = Prompt.EditStep(step.id, step.text) }
+                                    .wrapContentHeight(Alignment.CenterVertically).padding(vertical = 4.dp),
                             )
                             Spacer(Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {

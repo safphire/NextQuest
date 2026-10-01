@@ -118,4 +118,30 @@ class RepositoryTest {
         val mine = repo.allEvents().filter { it.deviceId == deviceA }.maxBy { it.seq }
         assertTrue(mine.ts > now + 10_000_000)
     }
+
+    @Test
+    fun refoldBeforeFirstLoad_thenCommit_works() = runTest {
+        // A time-zone broadcast can refold before anything else touched the repository.
+        val repo = repo()
+        repo.refold()
+        assertIs<CommitResult.Ok>(QuestActions(repo) { now }.capture("Still writable"))
+        assertEquals(1, repo.current().quests.size)
+    }
+
+    @Test
+    fun trackingAQuestWithAFocusedStepless_subquest_putsTheStepOnTheSubquest() = runTest {
+        val repo = repo()
+        val actions = QuestActions(repo) { now }
+        actions.capture("Renovate")
+        val parent = repo.current().quests.values.single().id
+        assertIs<CommitResult.Ok>(actions.addSubquest(parent, "Kitchen"))
+        val kitchen = repo.current().quests.values.single { it.title == "Kitchen" }.id
+        assertIs<CommitResult.Ok>(actions.focus(parent, kitchen))
+        assertIs<CommitResult.Ok>(actions.track(parent, firstStep = "Measure the walls"))
+        val state = repo.current()
+        assertEquals(QuestStatus.TRACKED, state.quests[parent]!!.status)
+        val step = state.effectiveStep(parent)!!
+        assertEquals("Measure the walls", step.text)
+        assertEquals(kitchen, step.questId)
+    }
 }

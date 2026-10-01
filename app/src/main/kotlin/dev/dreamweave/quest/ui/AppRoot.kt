@@ -118,6 +118,16 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
     val state by vm.state.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val c = Quest.colors
+    // Collected before any early return, so onboarding messages and achievements show too.
+    val toasts = remember { mutableStateListOf<UiEvent>() }
+    LaunchedEffect(vm) { vm.events.collect { toasts.add(it) } }
+    val current = toasts.firstOrNull()
+    LaunchedEffect(current) {
+        if (current != null && current !is UiEvent.QuestCompleted) {
+            delay(if (current is UiEvent.Message && current.action != null) 5_000 else 2_200)
+            if (toasts.firstOrNull() === current) toasts.removeAt(0)
+        }
+    }
     val s = state
     val set = settings
     if (s == null || set == null) {
@@ -127,7 +137,10 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
         return
     }
     if (!set.onboardingDone) {
-        OnboardingScreen(vm, s)
+        Box(Modifier.fillMaxSize()) {
+            OnboardingScreen(vm, s)
+            ToastHost(current, onDismiss = { if (toasts.isNotEmpty()) toasts.removeAt(0) }, modifier = Modifier.align(Alignment.TopCenter))
+        }
         return
     }
 
@@ -144,15 +157,6 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
     var completingStep by rememberSaveable { mutableStateOf<String?>(null) }
     var pairRequest by remember { mutableStateOf<ExternalRequest.Pair?>(null) }
 
-    val toasts = remember { mutableStateListOf<UiEvent>() }
-    LaunchedEffect(vm) { vm.events.collect { toasts.add(it) } }
-    val current = toasts.firstOrNull()
-    LaunchedEffect(current) {
-        if (current != null && current !is UiEvent.QuestCompleted) {
-            delay(if (current is UiEvent.Message && current.action != null) 5_000 else 2_200)
-            if (toasts.firstOrNull() === current) toasts.removeAt(0)
-        }
-    }
 
     LaunchedEffect(external) {
         when (external) {
@@ -191,6 +195,15 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
                 }
             },
         )
+    }
+
+    // The digest and streak guard are on by default: they are the first reminders, so this is
+    // when Android 13+ asks for notifications (once; reminderSet() remembers it asked).
+    LaunchedEffect(Unit) {
+        if (currentSettings.digestEnabled || currentSettings.streakGuardEnabled) {
+            delay(1_500)
+            actions.reminderSet()
+        }
     }
 
     val backStack by nav.currentBackStackEntryAsState()
@@ -271,7 +284,8 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
             stepId = stepId,
             onCancel = {
                 completingStep = null
-                vm.message("Step kept open.")
+                // The +XP toast already showed (spec order: Done → XP → What's next?); say it didn't count.
+                vm.message("Step kept open — no XP yet.")
             },
             onConfirm = { next, finish ->
                 completingStep = null

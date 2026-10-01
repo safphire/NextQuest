@@ -81,14 +81,12 @@ fun ProposalsScreen(vm: QuestViewModel, state: QuestState, settings: AppSettings
             ask = Ask.Swap(p.id, nextStep)
             return
         }
-        vm.launch {
-            when (val r = vm.actions.decide(p.id, Decision.Accept(track = track, parkQuestId = parkQuestId, nextStepText = nextStep))) {
-                is dev.dreamweave.quest.data.CommitResult.Ok -> vm.message("Accepted.")
-                is dev.dreamweave.quest.data.CommitResult.Rejected ->
-                    if (r.reason == ProposalRules.NEEDS_NEXT_STEP) ask = Ask.NextStep(p.id, track, parkQuestId)
-                    else vm.message(QuestViewModel.humanize(r.reason))
-            }
-        }
+        // Through run(): accepting shows XP and achievement toasts like doing it by hand.
+        vm.run(
+            onRejected = { reason ->
+                (reason == ProposalRules.NEEDS_NEXT_STEP).also { if (it) ask = Ask.NextStep(p.id, track, parkQuestId) }
+            },
+        ) { decide(p.id, Decision.Accept(track = track, parkQuestId = parkQuestId, nextStepText = nextStep)) }
     }
 
     LazyColumn(
@@ -252,7 +250,7 @@ private fun SyncFooter(settings: AppSettings, now: Long) {
     val c = Quest.colors
     val text = when {
         settings.serverUrl == null -> "Sync is off. Everything stays on this phone."
-        settings.lastSyncError != null -> "Sync paused: ${settings.lastSyncError}. Will retry."
+        settings.lastSyncError != null -> "Sync problem: ${settings.lastSyncError.orEmpty().trimEnd('.')}."
         settings.lastSyncAt != null -> "Synced ${Format.age(settings.lastSyncAt ?: now, now).let { if (it == "now") "just now" else "$it ago" }}."
         else -> "Waiting for the first sync…"
     }

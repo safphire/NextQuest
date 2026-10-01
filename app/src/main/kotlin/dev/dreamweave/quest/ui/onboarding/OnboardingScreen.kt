@@ -35,7 +35,11 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,8 +66,16 @@ import dev.dreamweave.quest.ui.theme.Quest
 @Composable
 fun OnboardingScreen(vm: QuestViewModel, state: QuestState) {
     val c = Quest.colors
-    val items = remember { mutableStateListOf<String>() }
-    val chosen = remember { mutableStateMapOf<Int, String>() } // index → first step
+    // Saveable: a rotation or theme change mid-dump must not lose what was typed.
+    val items = rememberSaveable(saver = listSaver<SnapshotStateList<String>, String>(save = { it.toList() }, restore = { it.toMutableStateList() })) {
+        mutableStateListOf<String>()
+    }
+    val chosen = rememberSaveable( // index → first step
+        saver = listSaver<SnapshotStateMap<Int, String>, String>(
+            save = { m -> m.flatMap { (k, v) -> listOf(k.toString(), v) } },
+            restore = { flat -> mutableStateMapOf<Int, String>().apply { flat.chunked(2).forEach { (k, v) -> put(k.toInt(), v) } } },
+        ),
+    ) { mutableStateMapOf<Int, String>() }
     var input by rememberSaveable { mutableStateOf("") }
     var page by rememberSaveable { mutableStateOf(0) }
     val cap = state.slotCap
