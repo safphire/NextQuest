@@ -70,12 +70,15 @@ Rules worth knowing:
 
 ## Limits and logging
 
-- 60 tool calls per minute and 30 proposals per hour per connector
-  (`MCP_CALLS_PER_MINUTE`, `PROPOSALS_PER_HOUR`).
+- 60 requests per minute (any method) and 30 proposals per hour per
+  connector (`MCP_CALLS_PER_MINUTE`, `PROPOSALS_PER_HOUR`). Over the limit, a
+  `tools/call` gets a tool result with `isError: true`; other methods get
+  JSON-RPC error `-32000`.
 - Every request (`initialize`, `ping`, `tools/list`, `tools/call`) is logged
-  with the connector name, method, tool and outcome; the server page shows the
-  latest calls and the newest 1,000 are kept. Bodies and tokens are never
-  logged. Notifications aren't logged.
+  with the connector name, method, tool and outcome, including rate-limited
+  requests and server faults; the server page shows the latest calls and the
+  newest 1,000 are kept. Bodies and tokens are never logged. Notifications
+  aren't logged.
 - Request bodies are capped at 1 MB (`413` beyond).
 
 ## Protocol notes
@@ -86,7 +89,8 @@ Rules worth knowing:
 - Malformed messages get JSON-RPC errors, per message in a batch: `-32600`
   (not `"jsonrpc": "2.0"`, no method, bad id, empty batch), `-32601` (unknown
   method), `-32602` (params or `arguments` not an object, missing or unknown
-  tool name), `-32603` (server fault). Tool failures — bad arguments, refused
+  tool name), `-32603` (server fault), `-32000` (rate limited, except for
+  `tools/call`). Tool failures — bad arguments, refused
   proposals — are tool results with `isError: true`, as above.
 - `GET`/`DELETE /mcp` → 405: no SSE stream and no sessions (stateless server).
 - Protocol versions: `2025-06-18`, `2025-03-26`, `2024-11-05`.

@@ -2,9 +2,12 @@
 # One-command self-host:   cp .env.example .env   (set ADMIN_PASSWORD, PUBLIC_URL)
 #                          docker compose up -d
 # Put it behind HTTPS (Caddy, Traefik, a tunnel…) before connecting Claude or ChatGPT.
-# The port is published on 127.0.0.1 only, for a reverse proxy on the same host. To reach
-# it from the LAN directly, set BIND_ADDRESS=0.0.0.0. Behind a proxy, set TRUST_PROXY to
-# the number of proxy hops (1 for Caddy/Traefik on this host) so rate limits see client IPs.
+# Inside the container the server always listens on 0.0.0.0:8080. BIND_ADDRESS and PORT
+# only choose where compose publishes it on the host: 127.0.0.1 (default) for a reverse
+# proxy on the same host, 0.0.0.0 to reach it from the LAN directly.
+# TRUST_PROXY=1 (default) takes client IPs for rate limits from X-Forwarded-For, but only
+# when the request comes from loopback or a private/Docker network, i.e. that proxy. Set
+# TRUST_PROXY=0 if clients connect to the published port directly.
 services:
   quest:
     build: .
@@ -14,12 +17,12 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD (12+ characters) in .env}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-8080}}
       APP_NAME: ${APP_NAME:-NextQuest}
       TZ: ${TZ:-UTC}
       MCP_CALLS_PER_MINUTE: ${MCP_CALLS_PER_MINUTE:-60}
       PROPOSALS_PER_HOUR: ${PROPOSALS_PER_HOUR:-30}
-      TRUST_PROXY: ${TRUST_PROXY:-0}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
     volumes:
       - quest-data:/data
 

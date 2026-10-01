@@ -26,6 +26,8 @@ import io.ktor.http.contentType
 import io.ktor.http.parameters
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -155,6 +157,73 @@ class SecurityTest {
     }
 
     @Test
+    fun unapprovedRegistrationsAreCapped_oldestEvictedAfterTheGrace() = serverTest {
+        val oauth = services.oauth
+        fun body(name: String) = ToolJson.parseToJsonElement("""{"redirect_uris":["$CLAUDE_REDIRECT"],"client_name":"$name"}""").jsonObject
+        fun unapproved() = services.db.one("SELECT COUNT(*) FROM oauth_clients WHERE approved_at IS NULL") { it.getInt(1) }
+        connect("Claude") // approved: never evicted
+        val ids = List(OAuth.MAX_UNAPPROVED) { clock.now += 1; oauth.register(body("Flood $it")).str("client_id") }
+        // All within the grace period: the newcomer waits rather than evicting one being approved.
+        val full = runCatching { oauth.register(body("Late")) }.exceptionOrNull()
+        assertTrue(full is OAuthError && full.error == "temporarily_unavailable" && full.status == 429, full.toString())
+        val http429 = http.post("/oauth/register") { contentType(ContentType.Application.Json); setBody(body("Late").toString()) }
+        assertEquals(HttpStatusCode.TooManyRequests, http429.status)
+        assertContains(http429.bodyAsText(), "temporarily_unavailable")
+        // Once the grace has passed, the oldest makes room; the count stays at the cap.
+        clock.now += OAuth.UNAPPROVED_GRACE_MS
+        val fresh = oauth.register(body("Fresh")).str("client_id")
+        assertEquals(OAuth.MAX_UNAPPROVED, unapproved())
+        assertNull(oauth.client(ids.first()))
+        assertTrue(oauth.client(ids[1]) != null && oauth.client(fresh) != null)
+        assertEquals(1, services.oauth.connections(services.config.userId).size)
+    }
+
+    @Test
+    fun redirectUrisAreLimitedInLength() = serverTest {
+        fun body(uri: String) = ToolJson.parseToJsonElement("""{"redirect_uris":["$uri"],"client_name":"X"}""").jsonObject
+        val base = "https://claude.ai/"
+        services.oauth.register(body(base + "a".repeat(OAuth.MAX_REDIRECT_URI - base.length)))
+        val long = runCatching { services.oauth.register(body(base + "a".repeat(OAuth.MAX_REDIRECT_URI - base.length + 1))) }.exceptionOrNull()
+        assertTrue(long is OAuthError && long.error == "invalid_redirect_uri", long.toString())
+    }
+
+    @Test
+    fun reauthorizingClientSurvivesHousekeeping() = serverTest {
+        val verifier = "r".repeat(50)
+        val a = register("Claude")
+        token("grant_type" to "authorization_code", "code" to approvedCode(a, verifier), "client_id" to a, "code_verifier" to verifier)
+        // Its grant lapses, and a day passes: it is purgeable...
+        services.db.update("UPDATE oauth_tokens SET revoked_at = ?", clock.now)
+        clock.now += OAuth.UNAPPROVED_TTL_MS + 1
+        // ...until the owner approves it again; a registration in between doesn't remove it.
+        val code = approvedCode(a, verifier)
+        register("Someone else")
+        assertEquals(HttpStatusCode.OK, token("grant_type" to "authorization_code", "code" to code, "client_id" to a, "code_verifier" to verifier).status)
+    }
+
+    @Test
+    fun tokensAreBoundEvenWithoutResource_andOldUnboundOnesStillWork() = serverTest {
+        val verifier = "u".repeat(50)
+        val a = register("Claude")
+        val noResource = http.submitForm(
+            "/oauth/authorize",
+            parameters {
+                append("response_type", "code"); append("client_id", a); append("redirect_uri", CLAUDE_REDIRECT); append("state", "s")
+                append("code_challenge", Secrets.pkceChallenge(verifier)); append("code_challenge_method", "S256")
+                append("decision", "approve"); append("password", PASSWORD)
+            },
+        )
+        val code = java.net.URLDecoder.decode(Regex("code=([^&]+)").find(noResource.headers[HttpHeaders.Location]!!)!!.groupValues[1], "UTF-8")
+        val t = ToolJson.parseToJsonElement(token("grant_type" to "authorization_code", "code" to code, "client_id" to a, "code_verifier" to verifier).bodyAsText()).jsonObject
+        assertEquals(setOf(services.config.mcpUrl), services.db.query("SELECT resource FROM oauth_tokens") { it.getString(1) }.toSet())
+        // Tokens issued before binding was mandatory are still accepted, and bound on rotation.
+        services.db.update("UPDATE oauth_tokens SET resource = NULL")
+        assertEquals(HttpStatusCode.OK, mcpRaw(t.str("access_token"), ping).status)
+        assertEquals(HttpStatusCode.OK, token("grant_type" to "refresh_token", "refresh_token" to t.str("refresh_token"), "client_id" to a).status)
+        assertEquals(2, services.db.one("SELECT COUNT(*) FROM oauth_tokens WHERE resource = ?", services.config.mcpUrl) { it.getInt(1) })
+    }
+
+    @Test
     fun disconnectDeletesTheClient() = serverTest {
         val token = connect("Claude").str("access_token")
         val clientId = services.oauth.connections(services.config.userId).single().clientId
@@ -198,6 +267,11 @@ class SecurityTest {
         val sneaky = nameOf("OpenAI", "https://openai.evil.example/cb")
         assertEquals(ProposalSource.OTHER, ProposalSource.fromClientName(sneaky))
         assertEquals("Unverified client", sneaky)
+        // Only ASCII survives: look-alikes and invisible characters can't dodge the check.
+        val cyrillic = nameOf("\u0421laude", "https://evil.example/cb") // "Сlaude"
+        assertEquals("laude", cyrillic)
+        assertEquals("Unverified client (evil.example)", nameOf("Clau\u200Bde", "https://evil.example/cb"))
+        assertEquals("AI client", services.oauth.clientName("\uFF23\uFF4C\uFF41\uFF55\uFF44\uFF45")) // fullwidth
         // One foreign redirect is enough to lose the name.
         assertEquals(ProposalSource.OTHER, ProposalSource.fromClientName(services.oauth.verifiedName("Claude", listOf(CLAUDE_REDIRECT, "https://evil.example/cb"))))
     }
@@ -291,6 +365,7 @@ class SecurityTest {
         }
         val blocked = http.submitForm("/login", parameters { append("password", PASSWORD) }) { header(HttpHeaders.XForwardedFor, "10.9.9.9") }
         assertEquals(HttpStatusCode.TooManyRequests, blocked.status)
+        assertContains(blocked.bodyAsText(), "restart the server") // the owner's way out
         // The owner's session still approves connectors.
         val clientId = register()
         val ok = http.submitForm("/oauth/authorize", consentForm(clientId, "v".repeat(50)) { append("decision", "approve"); append("csrf", csrfToken) }) {
@@ -299,6 +374,62 @@ class SecurityTest {
         assertContains(ok.headers[HttpHeaders.Location]!!, "code=")
         clock.now += 3_600_001
         assertEquals(HttpStatusCode.Found, http.submitForm("/login", parameters { append("password", PASSWORD) }) { header(HttpHeaders.XForwardedFor, "10.9.9.9") }.status)
+    }
+
+    @Test
+    fun forwardedForCountsOnlyFromAProxyPeer() {
+        // A peer on the internet can't pick its key, even with TRUST_PROXY set...
+        for (pub in listOf("203.0.113.5", "8.8.8.8", "172.32.0.1", "2001:db8::1", "::ffff:8.8.8.8", "evil.example")) {
+            assertEquals(pub, clientAddress(pub, listOf("1.2.3.4"), 1), pub)
+        }
+        // ...a proxy on loopback, a private or Docker network, or link-local can.
+        for (proxy in listOf("127.0.0.1", "::1", "10.0.0.1", "172.17.0.1", "192.168.1.10", "169.254.1.1", "fd00::1", "fe80::1%eth0", "[::1]", "localhost")) {
+            assertEquals("1.2.3.4", clientAddress(proxy, listOf("1.2.3.4"), 1), proxy)
+        }
+    }
+
+    @Test
+    fun ipv6ClientsAreKeyedByTheirSlash64() {
+        assertEquals("2001:db8:1:2::/64", rateLimitKey("2001:db8:1:2:3:4:5:6"))
+        assertEquals(rateLimitKey("2001:db8:1:2:3:4:5:6"), rateLimitKey("[2001:db8:1:2:ffff::1]"))
+        assertTrue(rateLimitKey("2001:db8:1:2::1") != rateLimitKey("2001:db8:1:3::1"))
+        assertEquals("1.2.3.4", rateLimitKey("1.2.3.4"))
+        assertEquals(64, rateLimitKey("x".repeat(500)).length)
+    }
+
+    @Test
+    fun loginLimitCoversTheWholeSlash64() = serverTest(configure = { it.copy(trustProxy = 1) }) {
+        repeat(10) { i ->
+            val r = http.submitForm("/login", parameters { append("password", "wrong") }) { header(HttpHeaders.XForwardedFor, "2001:db8:5:6::$i") }
+            assertEquals(HttpStatusCode.Unauthorized, r.status)
+        }
+        val same = http.submitForm("/login", parameters { append("password", PASSWORD) }) { header(HttpHeaders.XForwardedFor, "2001:db8:5:6:ffff::1") }
+        assertEquals(HttpStatusCode.TooManyRequests, same.status)
+        val other = http.submitForm("/login", parameters { append("password", PASSWORD) }) { header(HttpHeaders.XForwardedFor, "2001:db8:5:7::1") }
+        assertEquals(HttpStatusCode.Found, other.status)
+    }
+
+    @Test
+    fun concurrentWrongPasswordsCantOvershootTheCeiling() = serverTest(configure = { it.copy(trustProxy = 1) }) {
+        val statuses = kotlinx.coroutines.coroutineScope {
+            List(FAILED_PASSWORDS_PER_HOUR + 40) { i ->
+                async {
+                    http.submitForm("/login", parameters { append("password", "wrong") }) { header(HttpHeaders.XForwardedFor, "10.2.${i / 200}.${i % 200}") }.status
+                }
+            }.awaitAll()
+        }
+        assertEquals(FAILED_PASSWORDS_PER_HOUR, statuses.count { it == HttpStatusCode.Unauthorized })
+        assertEquals(40, statuses.count { it == HttpStatusCode.TooManyRequests })
+    }
+
+    @Test
+    fun refundGivesBackTheNewestHit() {
+        val limiter = RateLimiter { 0L }
+        assertNull(limiter.hit("k", 1, 1_000))
+        assertTrue(limiter.hit("k", 1, 1_000) != null)
+        limiter.refund("k")
+        assertNull(limiter.hit("k", 1, 1_000))
+        limiter.refund("unknown") // no-op
     }
 
     @Test
@@ -364,6 +495,42 @@ class SecurityTest {
         }
         val count = services.mcp.callCount(services.config.userId)
         assertTrue(count <= McpServer.KEEP_CALLS + McpServer.PRUNE_EVERY, "count $count")
+    }
+
+    @Test
+    fun everyMcpMethodIsRateLimited() = serverTest(configure = { it.copy(mcpCallsPerMinute = 3) }) {
+        val token = connect().str("access_token")
+        rpc(token, "initialize", buildJsonObject { put("protocolVersion", "2025-06-18") })
+        rpc(token, "tools/list")
+        assertTrue("result" in rpc(token, "ping"))
+        for (method in listOf("ping", "tools/list", "initialize", "nope/unknown")) {
+            val r = rpc(token, method)
+            assertEquals(McpServer.RATE_LIMITED, r["error"]!!.jsonObject.str("code").toInt(), method)
+            assertContains(r["error"]!!.jsonObject.str("message"), "Too many calls")
+        }
+        // tools/call stays a tool error, which clients hand to the model.
+        val (err, msg) = tool(token, "get_stats")
+        assertTrue(err)
+        assertContains(msg.jsonPrimitive.content, "Too many calls")
+        // Notifications cost nothing and are still accepted.
+        assertEquals(HttpStatusCode.Accepted, mcpRaw(token, """{"jsonrpc":"2.0","method":"notifications/initialized"}""").status)
+        val limited = services.mcp.recentCalls(services.config.userId).filter { it.detail == "rate limited" }
+        assertEquals(setOf("ping", "tools/list", "initialize", "nope/unknown", "tools/call"), limited.map { it.method }.toSet())
+        clock.now += 60_001
+        assertTrue("result" in rpc(token, "ping"))
+    }
+
+    @Test
+    fun internalErrorsAreLogged() = serverTest {
+        val token = connect().str("access_token")
+        services.db.update("DROP TABLE events") // the next fold fails
+        val r = rpc(token, "tools/call", buildJsonObject { put("name", "get_stats") })
+        assertEquals(McpServer.INTERNAL_ERROR, r["error"]!!.jsonObject.str("code").toInt())
+        val call = services.mcp.recentCalls(services.config.userId).first()
+        assertEquals("tools/call", call.method)
+        assertEquals("get_stats", call.tool)
+        assertFalse(call.ok)
+        assertEquals("internal error", call.detail)
     }
 
     @Test

@@ -21,7 +21,11 @@ data class OAuthClient(
     val redirectUris: List<String>,
     val authMethod: String,
     val secretHash: String?,
-    /** When the owner first approved it; until then its redirect URI is unverified (D-507). */
+    /**
+     * When the owner last approved it (refreshed on every consent, so housekeeping never
+     * removes a client mid-authorization); until the first approval its redirect URI is
+     * unverified (D-507).
+     */
     val approvedAt: Long? = null,
 ) {
     val approved: Boolean get() = approvedAt != null
@@ -34,7 +38,8 @@ data class AuthRequest(
     val state: String?,
     val codeChallenge: String,
     val scope: String,
-    val resource: String?,
+    /** Always `<PUBLIC_URL>/mcp`, the only protected resource (RFC 8707). */
+    val resource: String,
 )
 
 class OAuthError(val error: String, val description: String, val status: Int = 400) : Exception(description)
@@ -77,6 +82,7 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
         val uris = (body["redirect_uris"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
             ?: throw OAuthError("invalid_redirect_uri", "redirect_uris is required")
         if (uris.isEmpty() || uris.size > 10) throw OAuthError("invalid_redirect_uri", "between 1 and 10 redirect_uris are required")
+        if (uris.any { it.length > MAX_REDIRECT_URI }) throw OAuthError("invalid_redirect_uri", "redirect URIs must be at most $MAX_REDIRECT_URI characters")
         uris.forEach { if (!acceptableRedirect(it)) throw OAuthError("invalid_redirect_uri", "redirect URIs must be https (or http on localhost): $it") }
         val method = body.string("token_endpoint_auth_method") ?: "none"
         if (method !in setOf("none", "client_secret_post", "client_secret_basic")) {
@@ -84,17 +90,20 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
         }
         val name = verifiedName(clientName(body.string("client_name")), uris)
         val now = clock()
-        purgeUnused(now)
-        // Only approved clients count: open registration alone can't fill the cap.
-        if ((db.one("SELECT COUNT(*) FROM oauth_clients WHERE user_id = ? AND approved_at IS NOT NULL", config.userId) { it.getInt(1) } ?: 0) >= MAX_CLIENTS) {
-            throw OAuthError("invalid_client_metadata", "too many registered clients; remove unused ones on the admin page")
-        }
         val clientId = "qc_" + Secrets.token(16)
         val secret = if (method == "none") null else Secrets.token()
-        db.update(
-            "INSERT INTO oauth_clients (client_id, user_id, client_name, redirect_uris, secret_hash, auth_method, created_at) VALUES (?,?,?,?,?,?,?)",
-            clientId, config.userId, name, JsonArray(uris.map(::JsonPrimitive)).toString(), secret?.let(Secrets::sha256), method, now,
-        )
+        db.tx {
+            purgeUnused(now)
+            // Only approved clients count: open registration alone can't fill the cap.
+            if ((one("SELECT COUNT(*) FROM oauth_clients WHERE user_id = ? AND approved_at IS NOT NULL", config.userId) { it.getInt(1) } ?: 0) >= MAX_CLIENTS) {
+                throw OAuthError("invalid_client_metadata", "too many registered clients; remove unused ones on the admin page")
+            }
+            makeRoomForUnapproved(now)
+            update(
+                "INSERT INTO oauth_clients (client_id, user_id, client_name, redirect_uris, secret_hash, auth_method, created_at) VALUES (?,?,?,?,?,?,?)",
+                clientId, config.userId, name, JsonArray(uris.map(::JsonPrimitive)).toString(), secret?.let(Secrets::sha256), method, now,
+            )
+        }
         return buildJsonObject {
             put("client_id", clientId)
             if (secret != null) {
@@ -123,9 +132,15 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
 
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
-    /** A short display name for the connector (it also names the MCP actor, `mcp:<name>`). */
+    /**
+     * A short display name for the connector (it also names the MCP actor, `mcp:<name>`).
+     * ASCII letters, digits, spaces and `._-()` only: look-alike letters from other
+     * scripts (a Cyrillic "С" in "Сlaude") and invisible characters are dropped, so the
+     * name reads as what [ProposalSource.fromClientName] and [verifiedName] see.
+     */
     fun clientName(raw: String?): String =
-        raw?.filter { it.isLetterOrDigit() || it in " ._-()" }?.trim()?.take(40)?.ifEmpty { null } ?: "AI client"
+        raw?.filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in " ._-()" }
+            ?.replace(Regex(" +"), " ")?.trim()?.take(40)?.ifEmpty { null } ?: "AI client"
 
     /**
      * The client name is self-asserted, but it becomes the consent title, the `mcp:<name>`
@@ -145,22 +160,40 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
 
     /**
      * Registration housekeeping: never-approved clients expire after a day, and approved
-     * ones with no live token for a day (disconnected, or their grant expired) are removed
-     * too, so the cap only ever counts connectors that work.
+     * ones with no live token and no approval for a day (disconnected, or their grant
+     * expired) are removed too, so the cap only ever counts connectors that work. Each
+     * consent refreshes `approved_at`, so a client mid-re-authorization is kept.
      */
-    private fun purgeUnused(now: Long) {
-        db.tx {
-            val stale = query(
-                """
-                SELECT client_id FROM oauth_clients c WHERE c.user_id = ? AND
-                  ((c.approved_at IS NULL AND c.created_at < ?) OR
-                   (c.approved_at IS NOT NULL AND c.approved_at < ? AND NOT EXISTS (
-                     SELECT 1 FROM oauth_tokens t WHERE t.client_id = c.client_id AND t.revoked_at IS NULL AND t.expires_at >= ?)))
-                """.trimIndent(),
-                config.userId, now - UNAPPROVED_TTL_MS, now - UNAPPROVED_TTL_MS, now,
-            ) { it.getString(1) }
-            stale.forEach { deleteClient(config.userId, it) }
+    private fun Db.purgeUnused(now: Long) {
+        val stale = query(
+            """
+            SELECT client_id FROM oauth_clients c WHERE c.user_id = ? AND
+              ((c.approved_at IS NULL AND c.created_at < ?) OR
+               (c.approved_at IS NOT NULL AND c.approved_at < ? AND NOT EXISTS (
+                 SELECT 1 FROM oauth_tokens t WHERE t.client_id = c.client_id AND t.revoked_at IS NULL AND t.expires_at >= ?)))
+            """.trimIndent(),
+            config.userId, now - UNAPPROVED_TTL_MS, now - UNAPPROVED_TTL_MS, now,
+        ) { it.getString(1) }
+        stale.forEach { deleteClient(config.userId, it) }
+    }
+
+    /**
+     * Keeps never-approved clients under [MAX_UNAPPROVED], whatever the rate of open
+     * registration: the oldest are evicted to make room, but only those older than
+     * [UNAPPROVED_GRACE_MS] — a flood can't evict the connector the owner is approving
+     * right now; it gets `temporarily_unavailable` instead until the grace has passed.
+     */
+    private fun Db.makeRoomForUnapproved(now: Long) {
+        val count = one("SELECT COUNT(*) FROM oauth_clients WHERE user_id = ? AND approved_at IS NULL", config.userId) { it.getInt(1) } ?: 0
+        if (count < MAX_UNAPPROVED) return
+        val evictable = query(
+            "SELECT client_id FROM oauth_clients WHERE user_id = ? AND approved_at IS NULL AND created_at < ? ORDER BY created_at, client_id LIMIT ?",
+            config.userId, now - UNAPPROVED_GRACE_MS, count - MAX_UNAPPROVED + 1,
+        ) { it.getString(1) }
+        if (count - evictable.size >= MAX_UNAPPROVED) {
+            throw OAuthError("temporarily_unavailable", "too many pending registrations; try again in a few minutes", 429)
         }
+        evictable.forEach { deleteClient(config.userId, it) }
     }
 
     private fun Db.deleteClient(userId: String, clientId: String) {
@@ -199,11 +232,12 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
         if (resource != null && resource != config.mcpUrl && resource != config.publicUrl) {
             throw OAuthError("invalid_target", "unknown resource $resource")
         }
-        // The server's only protected resource is /mcp: tokens are bound to it (RFC 8707).
-        return AuthRequest(client, redirect, p["state"], challenge, scope, resource?.let { config.mcpUrl })
+        // The server's only protected resource is /mcp: tokens are bound to it (RFC 8707),
+        // whether or not the client named it.
+        return AuthRequest(client, redirect, p["state"], challenge, scope, config.mcpUrl)
     }
 
-    /** Issues a code after the owner approved; this also marks the client approved. */
+    /** Issues a code after the owner approved; this also marks (or re-marks) the client approved. */
     fun issueCode(userId: String, req: AuthRequest): String {
         val code = Secrets.token()
         val now = clock()
@@ -212,7 +246,7 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
                 "INSERT INTO oauth_codes (code_hash, user_id, client_id, redirect_uri, code_challenge, scope, resource, expires_at) VALUES (?,?,?,?,?,?,?,?)",
                 Secrets.sha256(code), userId, req.client.clientId, req.redirectUri, req.codeChallenge, req.scope, req.resource, now + CODE_TTL_MS,
             )
-            update("UPDATE oauth_clients SET approved_at = ? WHERE client_id = ? AND approved_at IS NULL", now, req.client.clientId)
+            update("UPDATE oauth_clients SET approved_at = ? WHERE client_id = ?", now, req.client.clientId)
         }
         return code
     }
@@ -263,7 +297,7 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
             if (update("UPDATE oauth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL", now, hash) != 1) {
                 null
             } else {
-                issueTokens(row.userId, client.clientId, family = Secrets.token(8), resource = row.resource)
+                issueTokens(row.userId, client.clientId, family = Secrets.token(8), resource = row.resource ?: config.mcpUrl)
             }
         }
         return tokens ?: replayed(row, now)
@@ -302,12 +336,13 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
             if (update("UPDATE oauth_tokens SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL", now, hash) != 1) {
                 throw OAuthError("invalid_grant", "refresh token was already used")
             }
-            issueTokens(row.userId, row.clientId, row.family, row.resource)
+            // Tokens from before every grant was bound get bound on their next rotation.
+            issueTokens(row.userId, row.clientId, row.family, row.resource ?: config.mcpUrl)
         }
     }
 
     /** Access and refresh token; both carry the code's audience ([resource]) through every rotation. */
-    private fun Db.issueTokens(userId: String, clientId: String, family: String, resource: String?): JsonObject {
+    private fun Db.issueTokens(userId: String, clientId: String, family: String, resource: String): JsonObject {
         val access = Secrets.token()
         val refresh = Secrets.token()
         val now = clock()
@@ -334,8 +369,9 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
 
     /**
      * Validates a Bearer access token for /mcp. A token bound to an audience must be bound
-     * to this endpoint (it isn't, e.g., after PUBLIC_URL changed); unbound tokens come from
-     * clients that sent no `resource`.
+     * to this endpoint (it isn't, e.g., after PUBLIC_URL changed). New tokens are always
+     * bound; unbound ones were issued before that, to clients that sent no `resource`, and
+     * stay valid until they expire or rotate.
      */
     fun authenticate(accessToken: String): Grant? {
         val row = db.one(
@@ -369,6 +405,14 @@ class OAuth(private val db: Db, private val config: Config, private val clock: (
         const val CODE_TTL_MS = 10 * 60 * 1000L
         const val MAX_CLIENTS = 50
         const val UNAPPROVED_TTL_MS = 24 * 60 * 60 * 1000L
+
+        /** Never-approved registrations kept at once; the oldest beyond it are evicted. */
+        const val MAX_UNAPPROVED = 200
+
+        /** How long a fresh registration is safe from eviction: time to sign in and approve. */
+        const val UNAPPROVED_GRACE_MS = 10 * 60 * 1000L
+
+        const val MAX_REDIRECT_URI = 2_048
 
         private val LOOPBACK = setOf("localhost", "127.0.0.1", "::1")
 

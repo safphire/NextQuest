@@ -71,6 +71,13 @@ curl http://localhost:8080/health
   the public `https://` address. The app only pairs over HTTPS.
 - Data lives in the `quest-data` volume (`/data/quest.db`). Back it up like
   any SQLite file. Every phone also keeps the full log.
+- The server always listens on port 8080 inside the container;
+  `BIND_ADDRESS` (default `127.0.0.1`) and `PORT` only choose where compose
+  publishes it on the host.
+- `TRUST_PROXY=1` (the default) is right behind a reverse proxy on the same
+  host: rate limits then see client IPs from `X-Forwarded-For`, which is only
+  honoured from loopback or private/Docker addresses. Set it to `0` if clients
+  connect to the published port directly.
 - All settings (rate limits, allowed origins, proxy trust, bind address) are
   environment variables. See [`docker-compose.yml`](docker-compose.yml) and
   [`.env.example`](.env.example).

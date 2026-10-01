@@ -52,23 +52,26 @@ class RateLimiter(private val clock: () -> Long) {
     private var sweepAt = SWEEP_MIN
     private var lastSweep = 0L
 
-    /** Records a hit and returns null if allowed, or the seconds to wait. */
+    /** Checks and records a hit in one step: null if allowed, or the seconds to wait. */
     @Synchronized
     fun hit(key: String, limit: Int, windowMs: Long): Long? {
-        blocked(key, limit, windowMs)?.let { return it }
-        windows.getValue(key).hits.addLast(clock())
-        return null
-    }
-
-    /** Like [hit] without recording one: for budgets spent only on failure. */
-    @Synchronized
-    fun blocked(key: String, limit: Int, windowMs: Long): Long? {
         val now = clock()
         if (windows.size >= sweepAt || now - lastSweep >= SWEEP_INTERVAL_MS) sweep(now)
         val w = windows.getOrPut(key) { Window(windowMs) }
         while (w.hits.isNotEmpty() && w.hits.first() <= now - windowMs) w.hits.removeFirst()
         if (w.hits.size >= limit) return ((w.hits.first() + windowMs - now) / 1000).coerceAtLeast(1)
+        w.hits.addLast(now)
         return null
+    }
+
+    /**
+     * Takes back the newest hit on [key]. For budgets spent only on failure: the attempt
+     * reserves a hit first, so concurrent attempts can never overshoot the limit, and
+     * returns it when it succeeded.
+     */
+    @Synchronized
+    fun refund(key: String) {
+        windows[key]?.hits?.removeLastOrNull()
     }
 
     @Synchronized

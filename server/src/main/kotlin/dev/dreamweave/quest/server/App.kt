@@ -95,7 +95,7 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
         get("/.well-known/oauth-authorization-server") { call.respond(s.oauth.authorizationServerMetadata()) }
 
         post("/oauth/register") {
-            if (s.limiter.hit("register:${call.clientAddress(config)}", 20, 3_600_000) != null) {
+            if (s.limiter.hit("register:${call.rateLimitKey(config)}", 20, 3_600_000) != null) {
                 return@post call.respond(HttpStatusCode.TooManyRequests, oauthError("invalid_client_metadata", "too many registrations, try later"))
             }
             val text = call.receiveTextLimited(BodyLimits.FORM)
@@ -104,7 +104,7 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
             try {
                 call.respond(HttpStatusCode.Created, s.oauth.register(body))
             } catch (e: OAuthError) {
-                call.respond(HttpStatusCode.BadRequest, oauthError(e.error, e.description))
+                call.respond(HttpStatusCode.fromValue(e.status), oauthError(e.error, e.description))
             }
         }
 
@@ -133,10 +133,10 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
             }
             val session = s.sessions.get(call.request.cookies[Sessions.COOKIE])
             if (!csrfOk(session, form["csrf"])) {
-                when (passwordCheck(call, s, form["password"])) {
+                when (val check = passwordCheck(call, s, form["password"])) {
                     PasswordCheck.OK -> Unit
-                    PasswordCheck.LIMITED -> return@post call.respondText(
-                        consentPage(config, req, form, null, "Too many attempts. Wait a few minutes."), ContentType.Text.Html, HttpStatusCode.TooManyRequests,
+                    PasswordCheck.LIMITED, PasswordCheck.LIMITED_GLOBALLY -> return@post call.respondText(
+                        consentPage(config, req, form, null, check.message), ContentType.Text.Html, HttpStatusCode.TooManyRequests,
                     )
                     PasswordCheck.WRONG -> return@post call.respondText(
                         consentPage(config, req, form, null, "Wrong password."), ContentType.Text.Html, HttpStatusCode.Unauthorized,
@@ -165,7 +165,7 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
 
         // ---- sync API --------------------------------------------------------------------
         post(SyncApi.PAIR) {
-            if (s.limiter.hit("pair:${call.clientAddress(config)}", 10, 600_000) != null) {
+            if (s.limiter.hit("pair:${call.rateLimitKey(config)}", 10, 600_000) != null) {
                 return@post call.respond(HttpStatusCode.TooManyRequests, ApiError("rate_limited", "Too many attempts. Wait a few minutes."))
             }
             val req = call.receiveJsonLimited(PairRequest.serializer(), BodyLimits.FORM)
@@ -238,9 +238,10 @@ fun Application.questModule(config: Config, clock: () -> Long = { System.current
 
         post("/login") {
             val form = call.receiveFormLimited()
-            when (passwordCheck(call, s, form["password"])) {
+            when (val check = passwordCheck(call, s, form["password"])) {
                 PasswordCheck.OK -> Unit
-                PasswordCheck.LIMITED -> return@post call.respondText(Web.login(config, "Too many attempts. Wait a few minutes."), ContentType.Text.Html, HttpStatusCode.TooManyRequests)
+                PasswordCheck.LIMITED, PasswordCheck.LIMITED_GLOBALLY ->
+                    return@post call.respondText(Web.login(config, check.message), ContentType.Text.Html, HttpStatusCode.TooManyRequests)
                 PasswordCheck.WRONG -> return@post call.respondText(Web.login(config, "Wrong password."), ContentType.Text.Html, HttpStatusCode.Unauthorized)
             }
             val token = s.sessions.login(form["password"].orEmpty())
@@ -286,21 +287,31 @@ private val HTML_FORMS = setOf("/oauth/authorize", "/login", "/logout", "/pair",
 /** Wrong admin passwords across all addresses per hour: a botnet can't out-guess the per-IP limit. */
 const val FAILED_PASSWORDS_PER_HOUR = 100
 
-private enum class PasswordCheck { OK, WRONG, LIMITED }
+private enum class PasswordCheck(val message: String) {
+    OK(""),
+    WRONG("Wrong password."),
+    LIMITED("Too many attempts. Wait a few minutes."),
+    LIMITED_GLOBALLY("Too many failed sign-ins on this server. Try again within the hour, or restart the server to reset the limit."),
+}
 
 /**
  * The admin password check behind every login (sign-in page and connector consent):
  * 10 attempts per 10 minutes per client address, and at most [FAILED_PASSWORDS_PER_HOUR]
- * failures per hour in total. When the global budget is spent nobody can sign in for a
- * while, but a signed-in owner keeps their session (and approves connectors with it).
+ * failures per hour in total. Every attempt reserves a failure up front and a correct
+ * password gives it back, so concurrent guesses can't overshoot the ceiling. When the
+ * global budget is spent nobody can sign in for a while, but a signed-in owner keeps
+ * their session (and approves connectors with it); the counters live in memory, so
+ * restarting the server clears them (D-505).
  */
 private fun passwordCheck(call: ApplicationCall, s: Services, password: String?): PasswordCheck {
-    if (s.limiter.hit("login:${call.clientAddress(s.config)}", 10, 600_000) != null) return PasswordCheck.LIMITED
-    if (s.limiter.blocked("login-failures", FAILED_PASSWORDS_PER_HOUR, 3_600_000) != null) return PasswordCheck.LIMITED
-    if (s.sessions.checkPassword(password.orEmpty())) return PasswordCheck.OK
-    s.limiter.hit("login-failures", FAILED_PASSWORDS_PER_HOUR, 3_600_000)
-    return PasswordCheck.WRONG
+    if (s.limiter.hit("login:${call.rateLimitKey(s.config)}", 10, 600_000) != null) return PasswordCheck.LIMITED
+    if (s.limiter.hit(LOGIN_FAILURES, FAILED_PASSWORDS_PER_HOUR, 3_600_000) != null) return PasswordCheck.LIMITED_GLOBALLY
+    if (!s.sessions.checkPassword(password.orEmpty())) return PasswordCheck.WRONG
+    s.limiter.refund(LOGIN_FAILURES)
+    return PasswordCheck.OK
 }
+
+private const val LOGIN_FAILURES = "login-failures"
 
 private fun csrfOk(session: Sessions.Session?, submitted: String?): Boolean =
     session != null && submitted != null && Secrets.constantTimeEquals(submitted, session.csrf)

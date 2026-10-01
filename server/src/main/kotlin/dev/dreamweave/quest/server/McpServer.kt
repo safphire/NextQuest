@@ -51,14 +51,28 @@ class McpServer(
         }
     }
 
-    /** One failing message never fails the batch: it gets -32603 and the rest are answered. */
+    /**
+     * One failing message never fails the batch: it gets -32603 and the rest are answered.
+     * The failure is logged like any other request (best effort: the log write may be what
+     * failed).
+     */
     private fun safeMessage(grant: Grant, m: JsonElement): JsonElement? = try {
         message(grant, m)
     } catch (e: Exception) {
         log.error("mcp client=\"{}\" internal error", grant.clientName, e)
-        val id = (m as? JsonObject)?.get("id")?.takeIf(::validId) ?: JsonNull
-        if (id is JsonNull) null else error(id, INTERNAL_ERROR, "Internal error")
+        val obj = m as? JsonObject
+        val id = obj?.get("id")?.takeIf(::validId) ?: JsonNull
+        if (id is JsonNull) {
+            null
+        } else {
+            val method = obj?.string("method")?.take(100) ?: "?"
+            val tool = (obj?.get("params") as? JsonObject)?.string("name")?.take(100)?.takeIf { method == "tools/call" }
+            runCatching { record(grant, method, tool, false, "internal error") }
+            error(id, INTERNAL_ERROR, "Internal error")
+        }
     }
+
+    private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     /** Handles one JSON-RPC message; null for notifications and responses (nothing to send back). */
     private fun message(grant: Grant, m: JsonElement): JsonElement? {
@@ -77,6 +91,14 @@ class McpServer(
         val method = (methodEl as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(100)
             ?: return error(id, INVALID_REQUEST, "Invalid request: method must be a string")
         if (id is JsonNull) return null // notification (notifications/initialized, cancelled, …)
+        // Every request counts toward the connector's budget, whatever the method: each one
+        // is a log write. A refused tools/call is a tool error, which clients show the model.
+        limiter.hit("mcp:${grant.clientId}", config.mcpCallsPerMinute, 60_000)?.let { wait ->
+            val tool = if (method == "tools/call") (obj["params"] as? JsonObject)?.string("name")?.take(100) else null
+            record(grant, method, tool, false, "rate limited")
+            val text = "Too many calls. Try again in $wait seconds."
+            return if (method == "tools/call") result(id, toolError(text)) else error(id, RATE_LIMITED, text)
+        }
         val params = when (val p = obj["params"]) {
             null, is JsonNull -> JsonObject(emptyMap())
             is JsonObject -> p
@@ -149,10 +171,6 @@ class McpServer(
     }
 
     private fun callTool(grant: Grant, name: String, args: JsonObject): JsonObject {
-        limiter.hit("mcp:${grant.clientId}", config.mcpCallsPerMinute, 60_000)?.let { wait ->
-            record(grant, "tools/call", name, false, "rate limited")
-            return toolError("Too many calls. Try again in $wait seconds.")
-        }
         if (name.startsWith("propose_")) {
             limiter.hit("proposals:${grant.clientId}", config.proposalsPerHour, 3_600_000)?.let { wait ->
                 record(grant, "tools/call", name, false, "proposal limit")
@@ -239,6 +257,9 @@ class McpServer(
         const val METHOD_NOT_FOUND = -32601
         const val INVALID_PARAMS = -32602
         const val INTERNAL_ERROR = -32603
+
+        /** Implementation-defined server error (JSON-RPC reserves -32000..-32099). */
+        const val RATE_LIMITED = -32000
         const val KEEP_CALLS = 1_000
         const val PRUNE_EVERY = 50
     }
