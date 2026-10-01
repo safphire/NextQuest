@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.SemanticsMatcher
@@ -60,13 +62,25 @@ class CoreLoopUiTest {
         } catch (e: ComposeTimeoutException) {
             val tree = runCatching { compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString(maxDepth = Int.MAX_VALUE) }.getOrElse { "<no tree: $it>" }
             val quests = repository.state.value?.quests?.values?.map { "${it.title}/${it.status}" }
-            throw AssertionError("Timed out waiting for $what. Quests: $quests\n$tree", e)
+            // The first line is all a device run reports: make it say what is on screen.
+            throw AssertionError("Timed out waiting for $what. ${screenSummary()} Quests: $quests\n$tree", e)
         }
     }
 
     private fun waitForText(text: String, timeoutMs: Long = 15_000) = waitFor("\"$text\"", timeoutMs) {
         compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
     }
+
+    /** One line: windows, open dialogs/sheets, selected tab, visible texts. */
+    private fun screenSummary(): String = runCatching {
+        val roots = compose.onAllNodes(isRoot()).fetchSemanticsNodes().size
+        val dialogs = compose.onAllNodes(isDialog()).fetchSemanticsNodes().size
+        val tab = compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
+            .fetchSemanticsNodes().mapNotNull { it.config.getOrNull(SemanticsProperties.Text)?.joinToString() }
+        val texts = compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text))
+            .fetchSemanticsNodes().flatMap { n -> n.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } }.take(25)
+        "[roots=$roots dialogs=$dialogs selected=$tab texts=$texts]"
+    }.getOrElse { "[no summary: $it]" }
 
     /** The single on-screen node matching [matcher] (a closing sheet may still be composed off-screen). */
     private fun onScreen(matcher: SemanticsMatcher): SemanticsNodeInteraction {
@@ -93,7 +107,7 @@ class CoreLoopUiTest {
         // Never runBlocking on the main thread here: a commit started from the UI holds the
         // repository lock and resumes on this very thread (deadlock). Read the state flow.
         waitFor("the capture to reach the event log") { repository.state.value?.quests?.isNotEmpty() == true }
-        // (The closed sheet animates away; on-screen lookups below ignore it meanwhile.)
+        waitFor("the capture sheet to close after saving") { compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
 
         // Board → Track → first step.
         compose.onNodeWithText("Open Board").performClick()
