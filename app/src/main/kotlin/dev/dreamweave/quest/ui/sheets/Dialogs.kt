@@ -79,12 +79,13 @@ fun TextPromptDialog(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { if (ok) onConfirm(text.trim()) }),
                 )
+                // Inside the dialog's own composition, so the field exists when focus is requested.
+                LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
             }
         },
         confirmButton = { LimeButton(confirmLabel, onClick = { onConfirm(text.trim()) }, enabled = ok) },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
-    LaunchedEffect(Unit) { focus.requestFocus() }
 }
 
 /** Slots are full: park one tracked quest to make room (or cancel and finish one first). */
