@@ -168,6 +168,18 @@ subquest it is refused with a message naming the subquest. A second
 `park_quest` for the same quest is refused, and pending parks free each slot
 only once.
 
+## P2 — Data + UI
+
+### D-201 · Capture and "What's next?" are bottom panels in a plain dialog
+They started as Material 3 `ModalBottomSheet`s. On an API 34 emulator the
+capture sheet stayed on screen after a quick save (the quest was saved, the
+field cleared), with or without hiding through the sheet state first. Both
+are now `BottomPanel`: a bottom-anchored Compose `Dialog` that is open
+exactly while it is in composition, so closing is synchronous and an action
+runs once. Lost: drag-to-dismiss on capture (Back and an outside tap still
+close it). "What's next?" ignores Back and outside taps as before; "Not yet"
+keeps the step open. The core-loop instrumented test checks both close.
+
 ## P3 — Presence
 
 ### D-301 · Reminders are planned, then armed

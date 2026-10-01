@@ -5,28 +5,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,15 +35,12 @@ import dev.dreamweave.quest.ui.components.LimeButton
 import dev.dreamweave.quest.ui.components.MetaLabel
 import dev.dreamweave.quest.ui.components.QuietButton
 import dev.dreamweave.quest.ui.theme.Quest
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * "What's next?" — shown right after Done. A tracked quest must leave with a new next
- * step (principle 4) unless the quest itself is finished. Swiping it away is disabled;
+ * step (principle 4) unless the quest itself is finished. Back and outside taps do nothing;
  * "Not yet" keeps the step open instead.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WhatsNextSheet(
     state: QuestState,
@@ -68,20 +58,17 @@ fun WhatsNextSheet(
     }
     val plan = remember(state, stepId, finishing) { Completion.plan(state, stepId, finishing) }
     val finishPlan = remember(state, stepId) { Completion.plan(state, stepId, true) }
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val stepText = state.steps.getValue(stepId).text
     val owner = state.quests[plan.ownerId]
     val nextOwner = plan.nextOwnerId?.let { state.quests[it] }
     val canSave = text.isNotBlank() || !plan.nextRequired
 
-    val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
-    // Hide the sheet first, then report (same pattern and reason as CaptureSheet); the
-    // action runs exactly once even if the hide is refused or interrupted.
+    // Each action runs once, even if a second tap lands before the panel leaves composition.
     fun closeThen(action: () -> Unit) {
         if (closing) return
         closing = true
-        scope.launch { runCatching { withTimeoutOrNull(1_000) { sheet.hide() } } }.invokeOnCompletion { action() }
+        action()
     }
 
     fun confirm() {
@@ -92,8 +79,8 @@ fun WhatsNextSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = {}, sheetState = sheet, containerColor = c.surface) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).imePadding().navigationBarsPadding()) {
+    BottomPanel(onDismissRequest = {}, dismissible = false) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             MetaLabel("Done · +${Xp.STEP} XP")
             Text(stepText, style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
             Spacer(Modifier.height(12.dp))
@@ -146,6 +133,6 @@ fun WhatsNextSheet(
             TextButton(onClick = { closeThen(onCancel) }, modifier = Modifier.fillMaxWidth()) { Text("Not yet — keep the step open") }
             Spacer(Modifier.height(12.dp))
         }
+        LaunchedEffect(finishing) { runCatching { focus.requestFocus() } }
     }
-    LaunchedEffect(finishing) { runCatching { focus.requestFocus() } }
 }

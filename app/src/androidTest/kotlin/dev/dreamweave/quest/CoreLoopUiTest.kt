@@ -124,6 +124,7 @@ class CoreLoopUiTest {
         waitForText("What's next?")
         onScreen(hasSetTextAction()).performTextInput("Draft the intro")
         compose.onNodeWithText("Set next step").performClick()
+        waitFor("the What's next panel to close") { compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
         waitForText("Draft the intro")
         compose.onNodeWithText("Draft the intro").assertIsDisplayed()
 
