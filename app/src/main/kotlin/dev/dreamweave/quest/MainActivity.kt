@@ -11,7 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.dreamweave.quest.core.Ids
 import dev.dreamweave.quest.data.ThemeMode
+import dev.dreamweave.quest.sync.SyncWorker
 import dev.dreamweave.quest.ui.AppRoot
 import dev.dreamweave.quest.ui.ExternalRequest
 import dev.dreamweave.quest.ui.QuestViewModel
@@ -33,6 +35,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Opening the app is when fresh AI proposals matter most.
+        if ((application as QuestApp).container.sync.isPaired) SyncWorker.now(this)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -49,19 +57,22 @@ class MainActivity : ComponentActivity() {
             intent ?: return null
             return when {
                 intent.action == Intent.ACTION_SEND && intent.type?.startsWith("text/") == true -> {
+                    // CharSequence: styled text from some apps isn't a String extra.
                     val text = listOfNotNull(
-                        intent.getStringExtra(Intent.EXTRA_SUBJECT),
-                        intent.getStringExtra(Intent.EXTRA_TEXT),
+                        intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)?.toString(),
+                        intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString(),
                     ).joinToString(" — ").trim()
                     ExternalRequest.Capture(text.ifEmpty { null })
                 }
                 intent.action == ACTION_CAPTURE -> ExternalRequest.Capture(null)
                 intent.action == ACTION_OPEN_PROPOSALS -> ExternalRequest.OpenProposals
-                intent.getStringExtra(EXTRA_QUEST_ID) != null -> ExternalRequest.OpenQuest(intent.getStringExtra(EXTRA_QUEST_ID)!!)
+                // The launcher activity is exported: only well-formed ids reach navigation.
+                intent.getStringExtra(EXTRA_QUEST_ID)?.let(Ids::isValid) == true -> ExternalRequest.OpenQuest(intent.getStringExtra(EXTRA_QUEST_ID)!!)
                 intent.data?.scheme == PAIR_SCHEME && intent.data?.host == "pair" -> {
                     val server = intent.data?.getQueryParameter("server")
                     val code = intent.data?.getQueryParameter("code")
-                    if (server != null && code != null) ExternalRequest.Pair(server, code) else null
+                    // Only pre-fills the pairing form; the user confirms the server (SyncSection).
+                    if (server != null && code != null && server.startsWith("https://")) ExternalRequest.Pair(server.take(300), code.take(20)) else null
                 }
                 else -> null
             }

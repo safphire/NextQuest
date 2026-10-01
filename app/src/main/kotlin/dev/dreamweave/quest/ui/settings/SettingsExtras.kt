@@ -96,7 +96,8 @@ object SettingsExtras {
     }
 
     @Composable
-    fun sync(vm: QuestViewModel, state: QuestState, settings: AppSettings, pairRequest: ExternalRequest.Pair?, onPairHandled: () -> Unit) = Unit
+    fun sync(vm: QuestViewModel, state: QuestState, settings: AppSettings, pairRequest: ExternalRequest.Pair?, onPairHandled: () -> Unit) =
+        SyncSection(vm, settings, pairRequest, onPairHandled)
 
     @Composable
     fun vault(vm: QuestViewModel, state: QuestState, settings: AppSettings) = VaultSection(vm, settings)

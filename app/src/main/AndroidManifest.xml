@@ -40,6 +40,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- Pairing QR code / link from the sync server page: only pre-fills the form. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dwquest" android:host="pair" />
+            </intent-filter>
         </activity>
 
         <activity

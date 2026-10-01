@@ -13,6 +13,7 @@ import dev.dreamweave.quest.data.db.EventDao
 import dev.dreamweave.quest.data.db.EventEntity
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -65,7 +66,8 @@ class QuestRepository(
     suspend fun load(): QuestState = mutex.withLock { ensureLoaded() }
 
     private suspend fun ensureLoaded(): QuestState {
-        folder?.let { return it.snapshot() }
+        val loaded = folder
+        if (loaded != null && factory != null) return loaded.snapshot()
         return withContext(io) {
             val events = dao.all().map { it.toEvent() }
             val f = Fold.folder(events, tz)
@@ -102,7 +104,8 @@ class QuestRepository(
                 CommitResult.Rejected(result.reason)
             }
             is Commits.Result.Ok -> {
-                withContext(io) { dao.insertAll(events.map(EventEntity::from)) }
+                // Once the rows are written, memory must follow even if the caller is cancelled.
+                withContext(NonCancellable + io) { dao.insertAll(events.map(EventEntity::from)) }
                 folder = result.folder
                 val after = result.folder.snapshot()
                 _state.value = after
@@ -115,15 +118,17 @@ class QuestRepository(
 
     /**
      * Stores events that came from elsewhere (sync pull, snapshot import). Duplicates are
-     * ignored; invalid events are kept in the log but skipped by the fold.
+     * ignored; invalid events are kept in the log but skipped by the fold. [fromServer]
+     * marks them as already on the sync server, including own events pulled back.
      */
-    suspend fun ingest(events: List<Event>): IngestResult = mutex.withLock {
+    suspend fun ingest(events: List<Event>, fromServer: Boolean = false): IngestResult = mutex.withLock {
         val before = ensureLoaded()
         if (events.isEmpty()) return@withLock IngestResult(0, emptyList())
-        val fresh = withContext(io) {
+        val fresh = withContext(NonCancellable + io) {
             val existing = events.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             val unique = events.filter { it.id !in existing }.distinctBy { it.id }
-            dao.insertAll(unique.map(EventEntity::from))
+            dao.insertAll(unique.map { EventEntity.from(it, pushed = fromServer) })
+            if (fromServer) events.map { it.id }.filter { it in existing }.chunked(500).forEach { dao.markPushed(it) }
             unique
         }
         if (fresh.isEmpty()) return@withLock IngestResult(0, emptyList())
@@ -132,7 +137,7 @@ class QuestRepository(
         val skippedBefore = f.snapshot().skipped.size
         val needsRefold = fresh.any { f.isOutOfOrder(it) }
         val newFolder = if (needsRefold) {
-            withContext(io) { Fold.folder(dao.all().map { it.toEvent() }, tz) }
+            withContext(NonCancellable + io) { Fold.folder(dao.all().map { it.toEvent() }, tz) }
         } else {
             fresh.sortedWith(Event.ORDER).forEach { f.apply(it) }
             f
@@ -149,11 +154,23 @@ class QuestRepository(
     /** Re-derives everything, e.g. after the device time zone changed (streak days move). */
     suspend fun refold() = mutex.withLock {
         tz = timeZone()
-        val events = withContext(io) { dao.all().map { it.toEvent() } }
-        val f = Fold.folder(events, tz)
-        folder = f
-        _state.value = f.snapshot()
+        // A full (re)load: also builds the event factory if this runs before anything else.
+        folder = null
+        ensureLoaded()
+        Unit
     }
 
     suspend fun allEvents(): List<Event> = withContext(io) { dao.all().map { it.toEvent() } }
+
+    // ---- sync bookkeeping (never changes the fold) ------------------------------------------
+
+    /** User events the server doesn't have yet (the offline queue), after [afterId]. */
+    suspend fun unpushed(afterId: String, limit: Int): List<Event> =
+        withContext(io) { dao.unpushed(Actors.USER, afterId, limit).map { it.toEvent() } }
+
+    suspend fun unpushedCount(): Int = withContext(io) { dao.unpushedCount(Actors.USER) }
+
+    suspend fun markPushed(ids: List<String>) = withContext(io) { ids.chunked(500).forEach { dao.markPushed(it) } }
+
+    suspend fun markAllUnpushed() = withContext(io) { dao.markAllUnpushed() }
 }

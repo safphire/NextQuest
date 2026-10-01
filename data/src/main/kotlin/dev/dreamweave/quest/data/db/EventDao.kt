@@ -26,4 +26,23 @@ interface EventDao {
 
     @Query("SELECT id FROM events WHERE id IN (:ids)")
     suspend fun existingIds(ids: List<String>): List<String>
+
+    /**
+     * User events the sync server doesn't have yet, keyset-paged by id (UUIDv7, so roughly
+     * oldest first). Includes other devices' events that arrived by snapshot import; AI
+     * proposals are never pushed (only the server writes them).
+     */
+    @Query("SELECT * FROM events WHERE pushed = 0 AND actor = :actor AND id > :afterId ORDER BY id LIMIT :limit")
+    suspend fun unpushed(actor: String, afterId: String, limit: Int): List<EventEntity>
+
+    @Query("SELECT COUNT(*) FROM events WHERE pushed = 0 AND actor = :actor")
+    suspend fun unpushedCount(actor: String): Int
+
+    /** At most 500 ids per call (SQLite's bound-variable limit). */
+    @Query("UPDATE events SET pushed = 1 WHERE id IN (:ids)")
+    suspend fun markPushed(ids: List<String>)
+
+    /** After pairing with a (different) server, the whole log is offered to it again. */
+    @Query("UPDATE events SET pushed = 0")
+    suspend fun markAllUnpushed()
 }
