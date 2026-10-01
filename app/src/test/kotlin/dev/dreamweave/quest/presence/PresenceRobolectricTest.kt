@@ -44,7 +44,7 @@ class PresenceRobolectricTest {
     }
 
     @Test
-    fun alarmsAreReArmedAfterReboot() = runBlocking {
+    fun alarmsAreReArmedAfterReboot(): Unit = runBlocking {
         val due = System.currentTimeMillis() + 3 * 3_600_000
         c.actions.capture("Dentist")
         val q = c.repository.current().quests.values.single().id
@@ -62,7 +62,7 @@ class PresenceRobolectricTest {
     }
 
     @Test
-    fun notificationActions_done_snooze_skip() = runBlocking {
+    fun notificationActions_done_snooze_skip(): Unit = runBlocking {
         c.actions.capture("Run")
         val q = c.repository.current().quests.values.single().id
         c.actions.track(q, firstStep = "Shoes on")

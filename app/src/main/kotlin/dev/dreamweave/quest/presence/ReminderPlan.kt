@@ -2,6 +2,7 @@
 package dev.dreamweave.quest.presence
 
 import dev.dreamweave.quest.core.QuestState
+import dev.dreamweave.quest.core.Step
 import dev.dreamweave.quest.data.AppSettings
 import dev.dreamweave.quest.util.Format
 import kotlinx.datetime.TimeZone
@@ -29,15 +30,42 @@ object ReminderPlan {
         if (settings.digestEnabled) out += Planned.Digest(nextDaily(now, settings.digestMinutes, zone))
         if (settings.streakGuardEnabled) out += Planned.StreakGuard(nextDaily(now, settings.streakGuardMinutes, zone))
         for (step in state.steps.values) {
-            val due = step.dueAt ?: continue
-            if (step.isDone || step.superseded || step.reminderDismissed) continue
-            val quest = state.quests[step.questId] ?: continue
-            if (!quest.status.isOpen || quest.openStepId != step.id) continue
-            val at = step.snoozedUntil?.takeIf { it > due } ?: due
+            if (step.reminderDismissed || !isOpenStep(state, step.id)) continue
+            val at = reminderTime(step) ?: continue
             if ((firedAt[step.id] ?: Long.MIN_VALUE) >= at) continue // already fired for this time
             out += Planned.StepReminder(maxOf(at, now), step.id, step.alarm)
         }
         return out.sortedBy { it.at }
+    }
+
+    /**
+     * True while [stepId] is still its quest's open step: it exists, is not done or
+     * replaced, and its quest is open. Notification, alarm and widget actions check this
+     * before committing, so a stale reminder never completes a superseded step.
+     */
+    fun isOpenStep(state: QuestState, stepId: String): Boolean {
+        val step = state.steps[stepId] ?: return false
+        if (step.isDone || step.superseded) return false
+        val quest = state.quests[step.questId] ?: return false
+        return quest.status.isOpen && quest.openStepId == step.id
+    }
+
+    /** When the step's reminder is due: the snooze time if it moves the reminder later, else the due time. */
+    fun reminderTime(step: Step): Long? {
+        val due = step.dueAt ?: return null
+        return step.snoozedUntil?.takeIf { it > due } ?: due
+    }
+
+    /**
+     * Whether a posted reminder for [stepId] should still be showing at [now]: the step is
+     * still open, its reminder was not dismissed, and it is not snoozed or moved to later.
+     */
+    fun stillDue(state: QuestState, stepId: String, now: Long): Boolean {
+        if (!isOpenStep(state, stepId)) return false
+        val step = state.steps.getValue(stepId)
+        if (step.reminderDismissed) return false
+        val at = reminderTime(step) ?: return false
+        return at <= now
     }
 
     /** Today at [minutesOfDay] if still ahead, otherwise tomorrow. */

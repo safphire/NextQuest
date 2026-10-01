@@ -45,17 +45,24 @@ class AlarmRebootTest {
     fun stepAlarmIsReArmedAfterReboot() = runBlocking {
         val c = app.container
         val due = (System.currentTimeMillis() / 60_000 + 7 * 24 * 60) * 60_000 // a week ahead, whole minute
-        c.actions.capture("Instrumented alarm")
-        val q = c.repository.current().quests.values.first { it.title == "Instrumented alarm" }.id
-        c.actions.setStep(q, "Ring", dueAt = due, alarm = true)
-        c.presence.refresh()
-        assertEquals(true, waitFor { alarms.nextAlarmClock?.triggerTime?.let { it <= due } == true })
+        // A unique title, and the quest is dropped at the end: the test runs against the real app data.
+        val title = "Instrumented alarm ${System.nanoTime()}"
+        c.actions.capture(title)
+        val q = c.repository.current().quests.values.first { it.title == title }.id
+        try {
+            c.actions.setStep(q, "Ring", dueAt = due, alarm = true)
+            c.presence.refresh()
+            assertEquals(true, waitFor { alarms.nextAlarmClock?.triggerTime?.let { it <= due } == true })
 
-        // Wipe our alarms the way a reboot does (schedule an empty plan).
-        c.scheduler.reschedule(Fold.of(emptyList(), TimeZone.UTC), AppSettings(digestEnabled = false, streakGuardEnabled = false))
-        assertNotEquals(due, alarms.nextAlarmClock?.triggerTime)
+            // Wipe our alarms the way a reboot does (schedule an empty plan).
+            c.scheduler.reschedule(Fold.of(emptyList(), TimeZone.UTC), AppSettings(digestEnabled = false, streakGuardEnabled = false))
+            assertNotEquals(due, alarms.nextAlarmClock?.triggerTime)
 
-        SystemEventsReceiver().onReceive(app, Intent(Intent.ACTION_BOOT_COMPLETED))
-        assertEquals(true, waitFor { alarms.nextAlarmClock?.triggerTime == due }, "alarm not re-armed after boot")
+            SystemEventsReceiver().onReceive(app, Intent(Intent.ACTION_BOOT_COMPLETED))
+            assertEquals(true, waitFor { alarms.nextAlarmClock?.triggerTime == due }, "alarm not re-armed after boot")
+        } finally {
+            c.actions.drop(q)
+            c.presence.refresh()
+        }
     }
 }

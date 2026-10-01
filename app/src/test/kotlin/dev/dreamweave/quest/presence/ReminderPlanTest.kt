@@ -17,6 +17,7 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ReminderPlanTest {
@@ -69,5 +70,36 @@ class ReminderPlanTest {
         add(Events.stepSet(StepSet(s2, q, "old", dueAt = t("2026-03-06T09:00:00Z"))))
         add(Events.stepSet(StepSet(Ids.newId(clock + 1), q, "new")))
         assertTrue(ReminderPlan.compute(state(), settings, clock, utc, emptyMap()).isEmpty())
+    }
+
+    @Test
+    fun stillDue_followsTheOpenStep() {
+        val q = Ids.newId(clock)
+        val s1 = Ids.newId(clock)
+        add(Events.questCreated(QuestCreated(q, "Q")), Events.stepSet(StepSet(s1, q, "call", dueAt = t("2026-03-04T09:00:00Z"))))
+        assertTrue(ReminderPlan.isOpenStep(state(), s1))
+        assertTrue(ReminderPlan.stillDue(state(), s1, clock))
+
+        // Snoozed to later (maybe on another device): not showing until then.
+        add(Events.stepSnoozed(StepSnoozed(s1, t("2026-03-04T11:00:00Z"))))
+        assertFalse(ReminderPlan.stillDue(state(), s1, clock))
+        assertTrue(ReminderPlan.stillDue(state(), s1, t("2026-03-04T11:00:00Z")))
+
+        // Skipped: still the open step (Done stays valid), but the reminder is gone.
+        add(Events.stepReminderDismissed(StepReminderDismissed(s1)))
+        assertFalse(ReminderPlan.stillDue(state(), s1, t("2026-03-04T12:00:00Z")))
+        assertTrue(ReminderPlan.isOpenStep(state(), s1))
+
+        // Replaced: the old step is no longer open; the new one has no reminder.
+        val s2 = Ids.newId(clock + 1)
+        add(Events.stepSet(StepSet(s2, q, "new")))
+        assertFalse(ReminderPlan.isOpenStep(state(), s1))
+        assertTrue(ReminderPlan.isOpenStep(state(), s2))
+        assertFalse(ReminderPlan.stillDue(state(), s2, clock))
+
+        // Done or unknown: never open.
+        add(Events.stepCompleted(StepCompleted(s2)))
+        assertFalse(ReminderPlan.isOpenStep(state(), s2))
+        assertFalse(ReminderPlan.isOpenStep(state(), "missing"))
     }
 }

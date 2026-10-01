@@ -2,6 +2,7 @@
 package dev.dreamweave.quest.presence
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -30,7 +32,15 @@ object Notifications {
     const val ID_DIGEST = 1
     const val ID_GUARD = 2
 
-    fun stepNotificationId(stepId: String) = 1_000 + (stepId.hashCode() and 0x0FFFFFFF)
+    /** Every step notification uses this id with the step id as its tag, so two steps never collide. */
+    const val ID_STEP = 3
+
+    /**
+     * Unique per step, set as the data of every step intent (alarm, notification actions,
+     * content and full-screen intents) so their PendingIntents never merge
+     * (`Intent.filterEquals` compares data, not extras or request codes).
+     */
+    fun stepUri(stepId: String): Uri = Uri.parse("quest-reminder://step/$stepId")
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -67,19 +77,24 @@ object Notifications {
     fun canUseFullScreen(context: Context): Boolean =
         if (Build.VERSION.SDK_INT >= 34) context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() else true
 
-    private fun openApp(context: Context, requestCode: Int, questId: String? = null, action: String? = null): PendingIntent {
+    private fun openApp(context: Context, requestCode: Int, questId: String? = null, action: String? = null, uri: Uri? = null): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (questId != null) putExtra(MainActivity.EXTRA_QUEST_ID, questId)
             if (action != null) this.action = action
+            if (uri != null) data = uri
         }
         return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     private fun post(context: Context, id: Int, builder: NotificationCompat.Builder) {
+        post(context, null, id, builder.build())
+    }
+
+    private fun post(context: Context, tag: String?, id: Int, notification: Notification) {
         if (!canPost(context)) return
         try {
-            NotificationManagerCompat.from(context).notify(id, builder.build())
+            NotificationManagerCompat.from(context).notify(tag, id, notification)
         } catch (e: SecurityException) {
             // Permission revoked between the check and the call: nothing to do.
         }
@@ -121,10 +136,10 @@ object Notifications {
 
     /** A due step with Done / Snooze 1h / Skip. As an alarm it also gets a full-screen intent. */
     fun stepReminder(context: Context, quest: Quest, step: Step, asAlarm: Boolean) {
-        val id = stepNotificationId(step.id)
-        fun action(kind: String, rc: Int) = PendingIntent.getBroadcast(
-            context, id * 4 + rc,
-            Intent(context, ReminderReceiver::class.java).setAction(kind).putExtra(ReminderReceiver.EXTRA_STEP_ID, step.id),
+        val uri = stepUri(step.id)
+        fun action(kind: String) = PendingIntent.getBroadcast(
+            context, 0,
+            Intent(context, ReminderReceiver::class.java).setAction(kind).setData(uri).putExtra(ReminderReceiver.EXTRA_STEP_ID, step.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = NotificationCompat.Builder(context, if (asAlarm) CH_ALARMS else CH_REMINDERS)
@@ -133,18 +148,19 @@ object Notifications {
             .setContentText(quest.title)
             .setCategory(if (asAlarm) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openApp(context, id, questId = quest.id))
-            .addAction(0, "Done", action(ReminderReceiver.ACTION_DONE, 1))
-            .addAction(0, "Snooze 1h", action(ReminderReceiver.ACTION_SNOOZE, 2))
-            .addAction(0, "Skip", action(ReminderReceiver.ACTION_SKIP, 3))
-            .setDeleteIntent(action(ReminderReceiver.ACTION_SKIP, 3))
+            .setContentIntent(openApp(context, 30, questId = quest.id, uri = uri))
+            .addAction(0, "Done", action(ReminderReceiver.ACTION_DONE))
+            .addAction(0, "Snooze 1h", action(ReminderReceiver.ACTION_SNOOZE))
+            .addAction(0, "Skip", action(ReminderReceiver.ACTION_SKIP))
+            .setDeleteIntent(action(ReminderReceiver.ACTION_SKIP))
             .setAutoCancel(true)
         if (asAlarm) {
             builder.setOngoing(true)
             if (canUseFullScreen(context)) {
                 val fullScreen = PendingIntent.getActivity(
-                    context, id,
+                    context, 0,
                     Intent(context, AlarmActivity::class.java)
+                        .setData(uri)
                         .putExtra(ReminderReceiver.EXTRA_STEP_ID, step.id)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -152,10 +168,25 @@ object Notifications {
                 builder.setFullScreenIntent(fullScreen, true)
             }
         }
-        post(context, id, builder)
+        val notification = builder.build()
+        // An alarm keeps sounding until the user acts on it (or the alarm screen closes it).
+        if (asAlarm) notification.flags = notification.flags or Notification.FLAG_INSISTENT
+        post(context, step.id, ID_STEP, notification)
     }
 
     fun cancelStep(context: Context, stepId: String) {
-        NotificationManagerCompat.from(context).cancel(stepNotificationId(stepId))
+        NotificationManagerCompat.from(context).cancel(stepId, ID_STEP)
+    }
+
+    /** Step ids whose reminder notification is currently showing. */
+    fun postedStepIds(context: Context): Set<String> =
+        context.getSystemService(NotificationManager::class.java).activeNotifications
+            .filter { it.id == ID_STEP }
+            .mapNotNull { it.tag }
+            .toSet()
+
+    /** Removes every posted step notification for which [keep] is false (step done, replaced, snoozed…). */
+    fun cancelStaleSteps(context: Context, keep: (stepId: String) -> Boolean) {
+        for (stepId in postedStepIds(context)) if (!keep(stepId)) cancelStep(context, stepId)
     }
 }

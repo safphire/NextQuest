@@ -122,7 +122,10 @@ fun SettingsScreen(
                         subtitle = "Your tracked quests, their next steps and your streak.",
                         enabled = settings.digestEnabled,
                         minutes = settings.digestMinutes,
-                        onToggle = { on -> vm.updateSettings { it.copy(digestEnabled = on) } },
+                        onToggle = { on ->
+                            if (on) actions.reminderSet()
+                            vm.updateSettings { it.copy(digestEnabled = on) }
+                        },
                         onPickTime = { timeDialog = "digest" },
                     )
                     Spacer(Modifier.height(8.dp))
@@ -131,7 +134,10 @@ fun SettingsScreen(
                         subtitle = "Only if you haven't done a step today.",
                         enabled = settings.streakGuardEnabled,
                         minutes = settings.streakGuardMinutes,
-                        onToggle = { on -> vm.updateSettings { it.copy(streakGuardEnabled = on) } },
+                        onToggle = { on ->
+                            if (on) actions.reminderSet()
+                            vm.updateSettings { it.copy(streakGuardEnabled = on) }
+                        },
                         onPickTime = { timeDialog = "guard" },
                     )
                 }

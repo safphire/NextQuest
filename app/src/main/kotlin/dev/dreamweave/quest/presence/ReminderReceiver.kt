@@ -4,8 +4,11 @@ package dev.dreamweave.quest.presence
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
+import dev.dreamweave.quest.AppContainer
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Views
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
 import kotlinx.datetime.toLocalDateTime
@@ -19,17 +22,24 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext as QuestApp
         val c = app.container
-        val pending = goAsync()
+        // Null only when onReceive is called directly (tests), not by the system.
+        val pending: BroadcastReceiver.PendingResult? = goAsync()
         c.appScope.launch {
             try {
                 handle(context, c, intent)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A failed reminder must never take the whole app down.
+                Log.e(TAG, "reminder ${intent.action} failed", e)
             } finally {
-                pending.finish()
+                pending?.finish()
             }
         }
     }
 
-    private suspend fun handle(context: Context, c: dev.dreamweave.quest.AppContainer, intent: Intent) {
+    /** The work behind [onReceive]; internal so tests can run it synchronously. */
+    internal suspend fun handle(context: Context, c: AppContainer, intent: Intent) {
         val stepId = intent.getStringExtra(EXTRA_STEP_ID)
         val state = c.repository.current()
         val now = System.currentTimeMillis()
@@ -37,7 +47,8 @@ class ReminderReceiver : BroadcastReceiver() {
         when (intent.action) {
             ACTION_FIRE_DIGEST -> {
                 val today = Views.today(state, now, zone)
-                Notifications.digest(context, today.cards, today.streak.current)
+                // Nothing tracked: stay quiet (re-entry without guilt). The alarm still re-arms.
+                if (today.cards.isNotEmpty()) Notifications.digest(context, today.cards, today.streak.current)
             }
             ACTION_FIRE_GUARD -> {
                 val day = Instant.fromEpochMilliseconds(now).toLocalDateTime(zone).date
@@ -49,25 +60,28 @@ class ReminderReceiver : BroadcastReceiver() {
                 }
             }
             ACTION_FIRE_STEP -> if (stepId != null) {
-                val step = state.steps[stepId]
-                val quest = step?.let { state.quests[it.questId] }
-                if (step != null && quest != null && !step.isDone && quest.openStepId == step.id) {
+                // Re-check everything: the step may have been done, replaced, dismissed or
+                // snoozed (here or on another device) since the alarm was armed.
+                if (ReminderPlan.stillDue(state, stepId, now)) {
+                    val step = state.steps.getValue(stepId)
+                    val quest = state.quests.getValue(step.questId)
                     Notifications.stepReminder(context, quest, step, asAlarm = step.alarm)
-                    c.scheduler.markFired(step.id, step.snoozedUntil?.takeIf { it > (step.dueAt ?: 0) } ?: step.dueAt ?: now)
+                    c.scheduler.markFired(step.id, ReminderPlan.reminderTime(step) ?: now)
                 }
             }
+            // A stale notification (its step was done or replaced elsewhere) is only removed:
+            // Done must never complete — and reward — a step that is no longer current.
             ACTION_DONE -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)
-                // A rejection means it was already done elsewhere: nothing to undo.
-                c.actions.completeStepFromNotification(stepId)
+                if (ReminderPlan.isOpenStep(state, stepId)) c.actions.completeStepFromNotification(stepId)
             }
             ACTION_SNOOZE -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)
-                c.actions.snooze(stepId, now + SNOOZE_MS)
+                if (ReminderPlan.isOpenStep(state, stepId)) c.actions.snooze(stepId, now + SNOOZE_MS)
             }
             ACTION_SKIP -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)
-                c.actions.dismissReminder(stepId)
+                if (ReminderPlan.isOpenStep(state, stepId)) c.actions.dismissReminder(stepId)
             }
         }
         // Digest and guard re-arm for tomorrow; step actions changed state (the change
@@ -84,6 +98,7 @@ class ReminderReceiver : BroadcastReceiver() {
         const val ACTION_SKIP = "dev.dreamweave.quest.reminder.SKIP"
         const val EXTRA_STEP_ID = "dev.dreamweave.quest.extra.STEP_ID"
         const val SNOOZE_MS = 60 * 60 * 1000L
+        internal const val TAG = "QuestReminders"
     }
 }
 
@@ -91,13 +106,18 @@ class ReminderReceiver : BroadcastReceiver() {
 class SystemEventsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val c = (context.applicationContext as QuestApp).container
-        val pending = goAsync()
+        // Null only when onReceive is called directly (tests), not by the system.
+        val pending: BroadcastReceiver.PendingResult? = goAsync()
         c.appScope.launch {
             try {
                 if (intent.action == Intent.ACTION_TIMEZONE_CHANGED) c.repository.refold()
                 c.presence.refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(ReminderReceiver.TAG, "re-arming after ${intent.action} failed", e)
             } finally {
-                pending.finish()
+                pending?.finish()
             }
         }
     }

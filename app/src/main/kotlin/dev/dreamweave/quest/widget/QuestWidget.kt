@@ -4,6 +4,8 @@ package dev.dreamweave.quest.widget
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,10 +46,19 @@ import dev.dreamweave.quest.ui.theme.Tokens
 /** Home-screen widget: each tracked quest's next step with Done, plus a capture button. */
 class QuestWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val c = (context.applicationContext as QuestApp).container
-        val state = c.repository.current()
-        val today = Views.today(state, System.currentTimeMillis(), c.repository.zone)
-        provideContent { WidgetBody(context, today.cards, today.slotsUsed, today.slotCap) }
+        val repository = (context.applicationContext as QuestApp).container.repository
+        // Loads the event log if needed, so the state flow below has a value from the start.
+        repository.load()
+        provideContent {
+            // Collected, not read once: while the Glance session is alive, updateAll() only
+            // recomposes, so the content must follow the repository itself.
+            val state by repository.state.collectAsState()
+            val current = state
+            if (current != null) {
+                val today = Views.today(current, System.currentTimeMillis(), repository.zone)
+                WidgetBody(context, today.cards, today.slotsUsed, today.slotCap)
+            }
+        }
     }
 }
 

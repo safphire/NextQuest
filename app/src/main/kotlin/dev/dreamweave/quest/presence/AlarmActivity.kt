@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest.presence
 
+import android.app.KeyguardManager
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -24,9 +26,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -35,12 +41,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import dev.dreamweave.quest.AppContainer
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Completion
-import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.core.Xp
 import dev.dreamweave.quest.data.CommitResult
 import dev.dreamweave.quest.data.ThemeMode
+import dev.dreamweave.quest.ui.QuestViewModel
 import dev.dreamweave.quest.ui.components.LimeButton
 import dev.dreamweave.quest.ui.components.MetaLabel
 import dev.dreamweave.quest.ui.components.QuietButton
@@ -53,6 +60,9 @@ import kotlinx.coroutines.launch
  * the next step like the in-app flow (only a notification Done may skip it).
  */
 class AlarmActivity : ComponentActivity() {
+    /** The step on screen. singleInstance: a newer alarm arrives through [onNewIntent]. */
+    private var shownStepId by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 27) {
@@ -62,74 +72,140 @@ class AlarmActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         }
-        val stepId = intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID) ?: return finish()
+        shownStepId = intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID) ?: return finish()
         val c = (application as QuestApp).container
-
-        fun close() {
-            Notifications.cancelStep(this, stepId)
-            finish()
-        }
 
         setContent {
             QuestTheme(ThemeMode.SYSTEM) {
-                val state by produceState<QuestState?>(null) { value = c.repository.current() }
-                val s = state
-                val step = s?.steps?.get(stepId)
-                val quest = step?.let { s.quests[it.questId] }
-                var askingNext by rememberSaveable { mutableStateOf(false) }
-                var next by rememberSaveable { mutableStateOf("") }
-                val colors = Quest.colors
-                Column(
-                    Modifier.fillMaxSize().background(colors.background).safeDrawingPadding().padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(Icons.Rounded.Alarm, contentDescription = null, tint = colors.violet)
-                    Spacer(Modifier.height(12.dp))
-                    MetaLabel(quest?.title ?: "Step")
-                    Spacer(Modifier.height(8.dp))
-                    Text(step?.text ?: "", style = MaterialTheme.typography.headlineMedium, color = colors.text, textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(32.dp))
-                    if (s != null && step != null && !step.isDone) {
-                        val plan = Completion.plan(s, stepId, false)
-                        if (!askingNext) {
-                            LimeButton("Done · +${Xp.STEP} XP", large = true, modifier = Modifier.fillMaxWidth(), onClick = {
-                                if (plan.nextRequired) {
-                                    askingNext = true
-                                } else {
-                                    lifecycleScope.launch { c.actions.completeStep(stepId, null, false); close() }
-                                }
-                            })
-                            Spacer(Modifier.height(8.dp))
-                            QuietButton("Snooze 1h", modifier = Modifier.fillMaxWidth(), onClick = {
-                                lifecycleScope.launch { c.actions.snooze(stepId, System.currentTimeMillis() + ReminderReceiver.SNOOZE_MS); close() }
-                            })
-                            TextButton(onClick = { lifecycleScope.launch { c.actions.dismissReminder(stepId); close() } }) { Text("Dismiss") }
-                        } else {
-                            Text("What's next?", style = MaterialTheme.typography.titleLarge, color = colors.text)
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = next, onValueChange = { next = it.replace("\n", "") }, singleLine = true,
-                                modifier = Modifier.fillMaxWidth(), placeholder = { Text("The very next action") },
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = {}),
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            LimeButton("Set next step", enabled = next.isNotBlank(), large = true, modifier = Modifier.fillMaxWidth(), onClick = {
-                                lifecycleScope.launch {
-                                    if (c.actions.completeStep(stepId, next, false) is CommitResult.Ok) close()
-                                }
-                            })
-                            if (plan.canFinishOwner && plan.ownerIsRoot) {
-                                QuietButton("Complete quest · +${Xp.QUEST} XP", modifier = Modifier.fillMaxWidth(), onClick = {
-                                    lifecycleScope.launch { c.actions.completeStep(stepId, null, true); close() }
-                                })
-                            }
+                val id = shownStepId
+                // key(): a new step starts with fresh "What's next?" input.
+                if (id != null) key(id) { AlarmScreen(c, id) }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID)?.let { shownStepId = it }
+    }
+
+    private fun close(stepId: String) {
+        Notifications.cancelStep(this, stepId)
+        finish()
+    }
+
+    /**
+     * Shown over the lock screen: completing a step is the user's own action, so it waits
+     * until the keyguard is dismissed (snooze and dismiss don't need an unlock, like any alarm).
+     */
+    private fun whenUnlocked(action: () -> Unit) {
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        if (keyguard == null || !keyguard.isKeyguardLocked) {
+            action()
+            return
+        }
+        keyguard.requestDismissKeyguard(
+            this,
+            object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() {
+                    action()
+                }
+            },
+        )
+    }
+
+    @Composable
+    private fun AlarmScreen(c: AppContainer, stepId: String) {
+        LaunchedEffect(Unit) { c.repository.load() }
+        val state by c.repository.state.collectAsState()
+        val s = state
+        val step = s?.steps?.get(stepId)
+        val quest = if (s != null && step != null) s.quests[step.questId] else null
+        var askingNext by rememberSaveable { mutableStateOf(false) }
+        var next by rememberSaveable { mutableStateOf("") }
+        var error by remember { mutableStateOf<String?>(null) }
+        var busy by remember { mutableStateOf(false) }
+        val colors = Quest.colors
+
+        fun complete(nextText: String?, finishOwner: Boolean) {
+            if (busy) return
+            whenUnlocked {
+                busy = true
+                error = null
+                lifecycleScope.launch {
+                    when (val r = c.actions.completeStep(stepId, nextText, finishOwner)) {
+                        is CommitResult.Ok -> close(stepId)
+                        is CommitResult.Rejected -> {
+                            error = QuestViewModel.humanize(r.reason)
+                            busy = false
                         }
-                    } else if (s != null) {
-                        LimeButton("Close", onClick = { close() })
                     }
                 }
+            }
+        }
+
+        Column(
+            Modifier.fillMaxSize().background(colors.background).safeDrawingPadding().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(Icons.Rounded.Alarm, contentDescription = null, tint = colors.violet)
+            Spacer(Modifier.height(12.dp))
+            MetaLabel(quest?.title ?: "Step")
+            Spacer(Modifier.height(8.dp))
+            Text(step?.text ?: "", style = MaterialTheme.typography.headlineMedium, color = colors.text, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(32.dp))
+            if (s != null && ReminderPlan.isOpenStep(s, stepId)) {
+                val plan = Completion.plan(s, stepId, false)
+                if (!askingNext) {
+                    LimeButton("Done · +${Xp.STEP} XP", large = true, enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                        if (plan.nextRequired) {
+                            askingNext = true
+                        } else {
+                            complete(null, false)
+                        }
+                    })
+                    Spacer(Modifier.height(8.dp))
+                    QuietButton("Snooze 1h", modifier = Modifier.fillMaxWidth(), onClick = {
+                        lifecycleScope.launch { c.actions.snooze(stepId, System.currentTimeMillis() + ReminderReceiver.SNOOZE_MS); close(stepId) }
+                    })
+                    TextButton(onClick = { lifecycleScope.launch { c.actions.dismissReminder(stepId); close(stepId) } }) { Text("Dismiss") }
+                } else {
+                    Text("What's next?", style = MaterialTheme.typography.titleLarge, color = colors.text)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = next,
+                        onValueChange = {
+                            next = it.replace("\n", "")
+                            error = null
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(), placeholder = { Text("The very next action") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (next.isNotBlank()) complete(next, false) }),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    LimeButton("Set next step", enabled = next.isNotBlank() && !busy, large = true, modifier = Modifier.fillMaxWidth(), onClick = {
+                        complete(next, false)
+                    })
+                    if (plan.canFinishOwner && plan.ownerIsRoot) {
+                        QuietButton("Complete quest · +${Xp.QUEST} XP", enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                            complete(null, true)
+                        })
+                    }
+                    TextButton(onClick = {
+                        askingNext = false
+                        error = null
+                    }) { Text("Cancel") }
+                }
+                error?.let { message ->
+                    Spacer(Modifier.height(12.dp))
+                    Text(message, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary, textAlign = TextAlign.Center)
+                }
+            } else if (s != null) {
+                // Done, replaced or removed elsewhere: nothing left to act on.
+                LimeButton("Close", onClick = { close(stepId) })
             }
         }
     }

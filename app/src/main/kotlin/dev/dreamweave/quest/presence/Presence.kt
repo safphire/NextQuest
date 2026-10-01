@@ -38,7 +38,10 @@ class Presence(
     suspend fun refresh() {
         mutex.withLock {
             val state = repository.current()
-            scheduler.reschedule(state, settings.current(), zone = repository.zone)
+            val now = System.currentTimeMillis()
+            scheduler.reschedule(state, settings.current(), now = now, zone = repository.zone)
+            // Take down reminders whose step changed elsewhere (done, replaced, snoozed, skipped).
+            runCatching { Notifications.cancelStaleSteps(context) { stepId -> ReminderPlan.stillDue(state, stepId, now) } }
             runCatching { QuestWidget().updateAll(context) }
         }
     }

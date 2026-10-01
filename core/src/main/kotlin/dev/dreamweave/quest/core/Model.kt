@@ -13,7 +13,7 @@ enum class QuestStatus {
     val isOpen: Boolean get() = this != DONE && this != DROPPED
 }
 
-/** How a step was completed. Only [NOTIFICATION] and [WIDGET] may leave a tracked quest without a next step. */
+/** How a step was completed. Only [NOTIFICATION] may leave a tracked quest without a next step (D-101). */
 @Serializable
 enum class StepVia {
     @SerialName("app") APP,

@@ -37,8 +37,10 @@ class ReminderScheduler(private val context: Context) {
         // Cancel what is no longer planned.
         val previous = prefs.getStringSet(KEY_ARMED, emptySet()).orEmpty()
         for (old in previous - keys) cancel(old)
-        // Forget fired markers of steps that no longer exist or are done.
-        val stale = prefs.all.keys.filter { it.startsWith("fired:") && state.steps[it.removePrefix("fired:")]?.isDone != false }
+        // Forget fired markers of steps that no longer exist, are done or were replaced.
+        val stale = prefs.all.keys.filter { key ->
+            key.startsWith("fired:") && state.steps[key.removePrefix("fired:")].let { it == null || it.isDone || it.superseded }
+        }
         if (stale.isNotEmpty()) prefs.edit().apply { stale.forEach { remove(it) } }.apply()
         for (p in plan) arm(p)
         prefs.edit().putStringSet(KEY_ARMED, keys).apply()
@@ -51,7 +53,11 @@ class ReminderScheduler(private val context: Context) {
             else -> ReminderReceiver.ACTION_FIRE_STEP to key.removePrefix("step:")
         }
         return Intent(context, ReminderReceiver::class.java).setAction(action).apply {
-            if (stepId != null) putExtra(ReminderReceiver.EXTRA_STEP_ID, stepId)
+            if (stepId != null) {
+                // The data Uri, not the request code, keeps each step's alarm distinct.
+                data = Notifications.stepUri(stepId)
+                putExtra(ReminderReceiver.EXTRA_STEP_ID, stepId)
+            }
         }
     }
 
@@ -76,7 +82,7 @@ class ReminderScheduler(private val context: Context) {
                     // Shows the alarm icon in the status bar and survives Doze.
                     val show = PendingIntent.getActivity(
                         context, requestCode(p.key),
-                        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        Intent(context, MainActivity::class.java).setData(Notifications.stepUri(p.stepId)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                     )
                     alarms.setAlarmClock(AlarmManager.AlarmClockInfo(p.at, show), pi)
