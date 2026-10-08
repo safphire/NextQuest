@@ -88,5 +88,9 @@ class PracticeReminderTest {
         val now = t("2026-03-04T10:00:00Z")
         assertEquals(t("2026-03-04T14:30:00Z"), WhenWhere.dueAt(now, 14 * 60 + 30, utc))
         assertEquals(t("2026-03-05T09:00:00Z"), WhenWhere.dueAt(now, 9 * 60, utc))
+        // A chip's prefix alone isn't a cue.
+        assertNull(WhenWhere.cleanCue("after ", "after ", "at "))
+        assertNull(WhenWhere.cleanCue("  ", "after ", "at "))
+        assertEquals("at my desk", WhenWhere.cleanCue(" at my desk ", "after ", "at "))
     }
 }

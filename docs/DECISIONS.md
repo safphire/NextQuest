@@ -585,12 +585,12 @@ step it changed, the counters it added and the streak day it contributed. The un
 restores the before-images (removing a next step the completion created), subtracts the
 counters and XP, takes the day out of the streak, and drops achievements the lower
 counters no longer earn. It is refused when anything the completion changed has changed
-since (so it can't overwrite later work), when the lifetime counters moved since
-(another completion, a focus block, an accepted proposal: otherwise "as if it never
-happened" would be ambiguous for streak days and achievement dates), when it would
-break an invariant (a finished quest whose slot was taken meanwhile), once undone, or
-after an hour (the fold's window; the app offers 10 seconds, a notification 5
-minutes). Captures, edits and other events that move no counter don't block it.
+since (so it can't overwrite later work: an edit of the same step or quest blocks it),
+when an achievement unlocked since the completion would still be earned without it
+(its date "as if it never happened" would be ambiguous), when it would break an
+invariant (a finished quest whose slot was taken meanwhile), once undone, or after an
+hour (the fold's window; the app offers 10 seconds, a notification 5 minutes). Other
+events in between, including other devices' unrelated work, don't block it.
 Accepting a proposal isn't offered for undo (a decision, not a slip), and the widget's
 Done shows a toast without Undo. A reminder that already rang is not re-armed when its
 step is undone (fired markers are kept for the undo window). A property test checks that a log

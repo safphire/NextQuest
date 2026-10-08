@@ -45,6 +45,7 @@ import androidx.lifecycle.lifecycleScope
 import dev.dreamweave.quest.AppContainer
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Completion
+import dev.dreamweave.quest.core.EventTypes
 import dev.dreamweave.quest.core.Xp
 import dev.dreamweave.quest.util.ActionOutcome
 import dev.dreamweave.quest.util.Calm
@@ -175,8 +176,15 @@ class AlarmActivity : ComponentActivity() {
                 busy = true
                 error = null
                 lifecycleScope.launch {
+                    val text = c.repository.state.value?.steps?.get(stepId)?.text.orEmpty()
                     when (val r = Calm.commit(TAG, "alarm Done") { c.actions.completeStep(stepId, nextText, finishOwner) }) {
-                        is ActionOutcome.Done -> close(stepId)
+                        is ActionOutcome.Done -> {
+                            close(stepId)
+                            // Undo stays available from a silent notification, like a notification Done (B2).
+                            r.change.events.lastOrNull { it.type == EventTypes.STEP_COMPLETED }?.let {
+                                runCatching { Notifications.undoConfirmation(this@AlarmActivity, it.id, stepId, text) }
+                            }
+                        }
                         is ActionOutcome.Refused -> {
                             error = r.message
                             busy = false

@@ -261,6 +261,19 @@ object Notifications {
         post(context, eventId, ID_UNDO, n)
     }
 
+    /** An Undo from the notification that the log refused (something about it changed since). */
+    fun undoRefused(context: Context, eventId: String) {
+        val n = NotificationCompat.Builder(context, CH_REMINDERS)
+            .setSmallIcon(R.drawable.ic_stat_quest)
+            .setContentTitle(context.getString(R.string.undo_refused))
+            .setContentIntent(openApp(context, 31))
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(60_000L)
+            .build()
+        post(context, eventId, ID_UNDO, n)
+    }
+
     fun cancelUndo(context: Context, eventId: String) {
         NotificationManagerCompat.from(context).cancel(eventId, ID_UNDO)
     }

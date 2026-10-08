@@ -8,6 +8,7 @@ import android.util.Log
 import dev.dreamweave.quest.AppContainer
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Views
+import dev.dreamweave.quest.data.CommitResult
 import dev.dreamweave.quest.data.QuestActions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -86,7 +87,8 @@ class ReminderReceiver : BroadcastReceiver() {
             }
             ACTION_UNDO -> intent.getStringExtra(EXTRA_EVENT_ID)?.let { eventId ->
                 Notifications.cancelUndo(context, eventId)
-                c.actions.undo(eventId)
+                // Refused (it changed since): say so calmly instead of just vanishing.
+                if (c.actions.undo(eventId) is CommitResult.Rejected) Notifications.undoRefused(context, eventId)
             }
             ACTION_SNOOZE -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)

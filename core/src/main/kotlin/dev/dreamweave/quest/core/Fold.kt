@@ -687,9 +687,14 @@ class Folder(val tz: TimeZone) {
             val rec = undoRecords[p.eventId]
                 ?: throw Reject(if (p.eventId in undone) "already undone" else "nothing to undo for that event")
             if (ts - rec.ts > Undo.WINDOW_MS) throw Reject("too late to undo")
-            // Later XP or counter changes (another completion, a focus block, an acceptance) would
-            // make "as if it never happened" ambiguous for streaks and achievement dates: refused too.
-            if (counters != rec.countersAfter) throw Reject("it changed since, so it can't be undone")
+            // Counters and streak days come back exactly by subtraction. The one thing that can't is
+            // an achievement unlocked since the completion that would still be earned without it:
+            // its date "as if it never happened" is unknown, so that undo is refused (D-1112).
+            val trial = streak.copy().also { t -> rec.streakDay?.let { (d, m) -> t.onUndo(d, m) } }
+            val without = counters.minus(rec.countersAdded).copy(bestStreak = trial.best)
+            if (achievements.any { (a, at) -> at >= rec.ts && a.isUnlocked(without) }) {
+                throw Reject("it changed since, so it can't be undone")
+            }
             for ((id, after) in rec.questsAfter) if (quests[id] != after) throw Reject("it changed since, so it can't be undone")
             for ((id, after) in rec.stepsAfter) if (steps[id] != after) throw Reject("it changed since, so it can't be undone")
             for ((id, before) in rec.questsBefore) if (before == null) removeQuest(id) else put(before)
@@ -793,7 +798,6 @@ class Folder(val tz: TimeZone) {
                     questsAfter = questBefore.keys.associateWith { quests[it] },
                     stepsAfter = stepBefore.keys.associateWith { steps[it] },
                     countersAdded = counters.minus(countersBefore).copy(bestStreak = 0),
-                    countersAfter = counters,
                     streakDay = completedDay,
                     steplessRoots = touchedRoots.filter { it in steplessBefore }.toSet(),
                 )
@@ -846,8 +850,6 @@ internal data class UndoRecord(
     val stepsAfter: Map<String, Step?>,
     /** Additive counters only (best streak is re-derived from the streak's days). */
     val countersAdded: Counters,
-    /** The lifetime counters right after the completion: an undo needs them unchanged. */
-    val countersAfter: Counters,
     val streakDay: Pair<kotlinx.datetime.LocalDate, Int>?,
     /** Roots that already showed "Needs next step" before the completion. */
     val steplessRoots: Set<String>,

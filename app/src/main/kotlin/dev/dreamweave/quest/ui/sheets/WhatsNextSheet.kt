@@ -79,6 +79,8 @@ fun WhatsNextSheet(
     val finishing = finishingSaved && !finishPlan.ownerIsRoot
     val plan = remember(state, stepId, finishing) { Completion.plan(state, stepId, finishing) }
     val stepText = state.steps.getValue(stepId).text
+    val afterPrefix = stringResource(R.string.cue_after_prefix)
+    val atPrefix = stringResource(R.string.cue_at_prefix)
     // nextOwnerId is null only when finishing a top-level quest, which this panel completes directly.
     val nextOwner = state.quests.getValue(plan.nextOwnerId ?: plan.rootId)
     val canSave = text.isNotBlank() || !plan.nextRequired
@@ -96,8 +98,9 @@ fun WhatsNextSheet(
             val next = text.trim().ifEmpty { null }
             val finish = finishing
             // A time cue is today at that time (tomorrow if it has already passed, D-1118).
-            val due = if (next == null) null else dueMinute?.let { WhenWhere.dueAt(now, it, zone) }
-            val cueText = if (next == null) null else cue.trim().ifEmpty { null }
+            // "Now" is when the step is saved, not when the sheet opened.
+            val due = if (next == null) null else dueMinute?.let { WhenWhere.dueAt(System.currentTimeMillis(), it, zone) }
+            val cueText = if (next == null) null else WhenWhere.cleanCue(cue, afterPrefix, atPrefix)
             closeThen { onConfirm(next, finish, due, cueText) }
         }
     }
@@ -176,6 +179,12 @@ object WhenWhere {
     fun dueAt(now: Long, minuteOfDay: Int, zone: TimeZone): Long {
         val today = Format.epochOf(Format.dateOf(now, zone), minuteOfDay, zone)
         return if (today > now) today else Format.tomorrowAt(now, minuteOfDay, zone)
+    }
+
+    /** The typed cue, or null when nothing was added after a chip's "after " / "at ". */
+    fun cleanCue(cue: String, vararg prefixes: String): String? {
+        val t = cue.trim()
+        return t.takeIf { it.isNotEmpty() && prefixes.none { p -> p.trim().equals(t, ignoreCase = true) } }
     }
 }
 

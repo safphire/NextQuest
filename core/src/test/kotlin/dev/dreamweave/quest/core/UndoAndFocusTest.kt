@@ -100,20 +100,22 @@ class UndoAndFocusTest {
     }
 
     @Test
-    fun undoIsRefusedAfterALaterCompletion_soAchievementDatesStayExact() {
+    fun undoIsRefusedOnlyWhenAnAchievementDateWouldBeAmbiguous() {
         val s = Scenario()
         val a = s.tracked("A", "a1")
         val b = s.tracked("B", "b1")
+        // The first step unlocks FIRST_STEP; a second step would earn it too: its date is ambiguous.
         val first = s.complete(s.stepOf(a), next = "a2")
         s.advanceMinutes(1)
         s.complete(s.stepOf(b), next = "b2")
         assertTrue(s.rejected(Events.completionUndone(CompletionUndone(first))).contains("changed"))
-        // A capture in between changes no counters: the undo still works.
-        val t = Scenario()
-        val q = t.tracked("Q", "q1")
-        val e = t.complete(t.stepOf(q), next = "q2")
-        t.capture("An idea")
-        t.ok(Events.completionUndone(CompletionUndone(e)))
+        // Another device's unrelated counter change (sorting an inbox item) doesn't block an undo.
+        val u = Scenario()
+        u.tracked("Seed", "s1").let { u.complete(u.stepOf(it), next = "s2") }
+        val q = u.tracked("Q", "q1")
+        val e = u.complete(u.stepOf(q), next = "q2")
+        u.tracked("Sorted from the inbox")
+        u.ok(Events.completionUndone(CompletionUndone(e)))
     }
 
     @Test
