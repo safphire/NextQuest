@@ -660,7 +660,7 @@ class Folder(val tz: TimeZone) {
             }
             put(q.copy(rhythm = r, focusedChildId = if (r != null) null else q.focusedChildId))
             touch(p.questId)
-            line(p.questId, if (r == null) "“${q.title}” is a quest again" else if (q.rhythm == null) "“${q.title}” is now a practice" else "Changed the rhythm of “${q.title}”")
+            line(p.questId, if (r == null) "“${q.title}” is a regular quest now" else if (q.rhythm == null) "“${q.title}” is now a practice" else "Changed the rhythm of “${q.title}”")
         }
 
         fun focusBlockCompleted(p: FocusBlockCompleted) {

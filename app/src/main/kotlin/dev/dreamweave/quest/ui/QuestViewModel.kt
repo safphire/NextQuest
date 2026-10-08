@@ -8,7 +8,13 @@ import androidx.lifecycle.viewModelScope
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Achievement
 import dev.dreamweave.quest.core.QuestState
+import dev.dreamweave.quest.R
+import dev.dreamweave.quest.core.EventTypes
+import dev.dreamweave.quest.core.Events
+import dev.dreamweave.quest.core.QuestCompleted
 import dev.dreamweave.quest.core.QuestStatus
+import dev.dreamweave.quest.core.StepCompleted
+import dev.dreamweave.quest.data.Change
 import dev.dreamweave.quest.data.AppSettings
 import dev.dreamweave.quest.data.CommitResult
 import dev.dreamweave.quest.data.QuestActions
@@ -33,6 +39,9 @@ sealed interface UiEvent {
     data class AchievementUnlocked(val achievement: Achievement) : UiEvent
     data class Message(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null) : UiEvent
     data class QuestCompleted(val title: String, val xp: Long) : UiEvent
+
+    /** A completion was just saved: the 10-second Undo bar (B2). */
+    data class UndoOffer(val eventId: String, val label: String) : UiEvent
 }
 
 class QuestViewModel(app: Application) : AndroidViewModel(app) {
@@ -63,7 +72,7 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
     /** A user action that failed unexpectedly (storage full, database error) gets a calm message, never a crash. */
     private val failures = CoroutineExceptionHandler { _, e ->
         Log.e(TAG, "action failed", e)
-        message("That didn't work. Try again; if it keeps happening, restart the app.")
+        message("That didn't go through. Your quests are safe — give it another try, and restart the app if it keeps happening.")
     }
 
     init {
@@ -99,6 +108,7 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
             when (val r = actions.block()) {
                 is CommitResult.Ok -> {
                     feedback(r.change.before, r.change.after, xpAlreadyShown)
+                    offerUndo(r.change)
                     onOk()
                 }
                 is CommitResult.Rejected -> if (!onRejected(r.reason)) {
@@ -117,6 +127,35 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
         val gained = after.xp - before.xp - xpAlreadyShown
         if (finished.isEmpty() && gained > 0) _events.tryEmit(UiEvent.XpGained(gained))
         (after.achievements.keys - before.achievements.keys).forEach { _events.tryEmit(UiEvent.AchievementUnlocked(it)) }
+    }
+
+    /** Every completion made in the app can be undone for 10 seconds (B2). */
+    private fun offerUndo(change: Change) {
+        val e = change.events.lastOrNull { it.type == EventTypes.STEP_COMPLETED || it.type == EventTypes.QUEST_COMPLETED } ?: return
+        val label = when (e.type) {
+            EventTypes.STEP_COMPLETED -> Events.decode(StepCompleted.serializer(), e.payload)?.let { p ->
+                val step = change.before.steps[p.stepId]
+                val quest = step?.let { change.before.quests[it.questId] }
+                when {
+                    quest?.isPractice == true && step != null -> "Session · ${step.text}"
+                    p.finishQuest && quest != null -> quest.title
+                    else -> step?.text
+                }
+            }
+            else -> Events.decode(QuestCompleted.serializer(), e.payload)?.let { change.before.quests[it.questId]?.title }
+        } ?: return
+        _events.tryEmit(UiEvent.UndoOffer(e.id, label))
+    }
+
+    /** Takes back a completion: XP, streak, achievements and focus return exactly to before. */
+    fun undo(eventId: String) {
+        val app = getApplication<Application>()
+        viewModelScope.launch(failures) {
+            when (actions.undo(eventId)) {
+                is CommitResult.Ok -> message(app.getString(R.string.undo_done))
+                is CommitResult.Rejected -> message(app.getString(R.string.undo_refused))
+            }
+        }
     }
 
     /** Runs a suspending UI task in the view model's scope (survives recomposition). */

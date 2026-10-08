@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -137,3 +138,27 @@ fun QuestCompleteCelebration(event: UiEvent.QuestCompleted, onDismiss: () -> Uni
     }
 }
 
+
+/** After a completion: "Done · step" with Undo, for 10 seconds (B2). Announced to screen readers. */
+@Composable
+fun UndoBar(label: String, onUndo: () -> Unit, modifier: Modifier = Modifier) {
+    val c = Quest.colors
+    Row(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(c.text)
+            .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            androidx.compose.ui.res.stringResource(dev.dreamweave.quest.R.string.undo_offer, label),
+            style = MaterialTheme.typography.bodyMedium, color = c.background, maxLines = 2,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(8.dp))
+        TextButton(onClick = onUndo, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(androidx.compose.ui.res.stringResource(dev.dreamweave.quest.R.string.undo), color = c.background, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}

@@ -5,6 +5,8 @@ import android.app.Application
 import android.util.Log
 import androidx.work.Configuration
 import dev.dreamweave.quest.data.DataContainer
+import dev.dreamweave.quest.focus.FocusTimer
+import dev.dreamweave.quest.reset.BreatheController
 import dev.dreamweave.quest.presence.Notifications
 import dev.dreamweave.quest.presence.Presence
 import dev.dreamweave.quest.presence.ReminderScheduler
@@ -39,6 +41,8 @@ class QuestApp : Application(), Configuration.Provider {
         VaultWorker.scheduleDaily(this)
         // Covers app updates and process restarts in addition to the system broadcasts.
         container.appScope.launch { container.presence.refresh() }
+        // A focus block that ran on (or ended) while the process was gone.
+        container.appScope.launch { container.focus.restore() }
         // Sync: periodically while paired, and shortly after every local change (debounced).
         container.appScope.launch {
             container.sync.reconcile() // a restored install has settings but no token
@@ -69,4 +73,6 @@ class AppContainer(app: Application) {
     val scheduler = ReminderScheduler(app)
     val presence = Presence(app, data.repository, data.settings, scheduler)
     val backups = Backups(data.repository)
+    val focus = FocusTimer(app, data.actions)
+    val breathe = BreatheController(app)
 }

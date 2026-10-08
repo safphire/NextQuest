@@ -109,7 +109,7 @@ class RotationTest {
         val restore = StateRestorationTester(compose)
         restore.setContent {
             QuestTheme(ThemeMode.LIGHT) {
-                WhatsNextSheet(state = state, stepId = step, onCancel = {}, onConfirm = { _, _ -> })
+                WhatsNextSheet(state = state, stepId = step, onCancel = {}, onConfirm = { _, _, _, _ -> })
             }
         }
         compose.onNode(hasSetTextAction()).performTextInput("Fit the tube")

@@ -53,6 +53,7 @@ import dev.dreamweave.quest.core.BoardTab
 import dev.dreamweave.quest.core.Quest as QuestModel
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.core.QuestStatus
+import dev.dreamweave.quest.core.Practices
 import dev.dreamweave.quest.core.Views
 import dev.dreamweave.quest.ui.QuestViewModel
 import dev.dreamweave.quest.ui.RootActions
@@ -183,8 +184,9 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
         when {
             q == null -> trackFlow = null
             state.effectiveStep(q.id) == null && flow.step == null -> TextPromptDialog(
-                title = "First step",
-                message = "A tracked quest always shows its next step. What's the first one for “${q.title}”?",
+                title = if (q.isPractice) "First session" else "First step",
+                message = if (q.isPractice) "What's the first session of “${q.title}”? (e.g. 20 min scales)"
+                else "A tracked quest always shows its next step. What's the first one for “${q.title}”?",
                 confirmLabel = if (flow.needsSwap) "Next" else "Track",
                 placeholder = "The very next physical action",
                 onDismiss = { trackFlow = null },
@@ -227,6 +229,7 @@ private fun BoardItem(
     QuestCard(onClick = onOpen, onClickLabel = "Open quest") {
         Column {
             Text(quest.title, style = MaterialTheme.typography.titleMedium, color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            quest.rhythm?.let { MetaLabel("Practice · ${Practices.label(it)}") }
             quest.why?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }

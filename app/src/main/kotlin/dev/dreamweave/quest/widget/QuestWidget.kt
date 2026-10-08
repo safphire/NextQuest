@@ -42,6 +42,7 @@ import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.TodayCard
 import dev.dreamweave.quest.core.Views
 import dev.dreamweave.quest.ui.theme.Tokens
+import dev.dreamweave.quest.util.Format
 
 /** Home-screen widget: each tracked quest's next step with Done, plus a capture button. */
 class QuestWidget : GlanceAppWidget() {
@@ -102,15 +103,21 @@ private fun WidgetBody(context: Context, cards: List<TodayCard>, used: Int, cap:
                         ) {
                             Column(GlanceModifier.defaultWeight()) {
                                 Text(card.quest.title, style = TextStyle(color = WText, fontSize = 13.sp, fontWeight = FontWeight.Bold), maxLines = 1)
+                                val practice = card.practice
                                 Text(
-                                    card.step?.text ?: "Needs next step",
+                                    when {
+                                        card.step == null -> "Needs next step"
+                                        // A practice resting until its next session day: calm, no Done.
+                                        practice != null && !practice.dueToday -> "Next session ${Format.shortDate(practice.nextSessionDay)} · ${card.step!!.text}"
+                                        else -> card.step!!.text + (card.step!!.cue?.let { " · $it" } ?: "")
+                                    },
                                     style = TextStyle(color = if (card.step == null) WViolet else WTextSecondary, fontSize = 12.sp),
                                     maxLines = 2,
                                 )
                             }
                             Spacer(GlanceModifier.width(8.dp))
                             val step = card.step
-                            if (step != null) {
+                            if (step != null && (card.practice == null || card.practice!!.dueToday)) {
                                 Box(
                                     GlanceModifier.size(48.dp).background(WLime).cornerRadius(12.dp)
                                         .clickable(

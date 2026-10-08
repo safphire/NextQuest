@@ -50,7 +50,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.dreamweave.quest.BuildConfig
 import dev.dreamweave.quest.R
+import dev.dreamweave.quest.R
 import dev.dreamweave.quest.core.Limits
+import dev.dreamweave.quest.core.Views
+import androidx.compose.ui.res.stringResource
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.data.AppSettings
 import dev.dreamweave.quest.data.ThemeMode
@@ -95,7 +98,7 @@ fun SettingsScreen(
         }
         item {
             SectionTitle("Quests")
-            QuestCard {
+            QuestCard { Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Tracked slots", style = MaterialTheme.typography.titleSmall, color = c.text)
@@ -112,7 +115,22 @@ fun SettingsScreen(
                         Icon(Icons.Rounded.Add, contentDescription = "More slots", tint = c.text)
                     }
                 }
-            }
+                // v1.1: when a step that sits untouched gets a gentle "Stuck?" (2–7 days).
+                Spacer(Modifier.height(8.dp))
+                val range = Views.STUCK_DAYS_RANGE
+                val stuckDays = settings.stuckDays.coerceIn(range)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.settings_stuck_days), style = MaterialTheme.typography.titleSmall, color = c.text, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { vm.updateSettings { it.copy(stuckDays = (stuckDays - 1).coerceIn(range)) } }, enabled = stuckDays > range.first) {
+                        Icon(Icons.Rounded.Remove, contentDescription = "Fewer days", tint = c.text)
+                    }
+                    val label = stringResource(R.string.settings_stuck_days_value, stuckDays)
+                    Text(label, style = MonoNumber, color = c.violet, modifier = Modifier.semantics { contentDescription = label })
+                    IconButton(onClick = { vm.updateSettings { it.copy(stuckDays = (stuckDays + 1).coerceIn(range)) } }, enabled = stuckDays < range.last) {
+                        Icon(Icons.Rounded.Add, contentDescription = "More days", tint = c.text)
+                    }
+                }
+            } }
         }
         item {
             SectionTitle("Reminders")

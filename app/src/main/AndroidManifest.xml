@@ -12,6 +12,11 @@
     <!-- Re-arm reminders after a reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- v1.1: the focus timer and Breathe run as user-started foreground services (time left in
+         the shade, a chime at the end; haptic breathing cues with the screen off). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Optional sync with your own server. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -82,6 +87,28 @@
 
         <receiver
             android:name=".presence.ReminderReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".focus.FocusService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="A focus timer the user started on one task: shows the time left and chimes when the block ends." />
+        </service>
+
+        <service
+            android:name=".reset.BreatheService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="A 1 to 5 minute breathing exercise the user started: plays a haptic cue for each breath, also with the screen off." />
+        </service>
+
+        <receiver
+            android:name=".focus.FocusReceiver"
             android:exported="false" />
 
         <receiver

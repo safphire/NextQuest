@@ -25,6 +25,8 @@ object Practices {
         val dueToday: Boolean,
         /** Today when [dueToday], otherwise the next day a session is wanted. */
         val nextSessionDay: LocalDate,
+        /** A session was already logged today. */
+        val doneToday: Boolean = false,
     )
 
     /** Monday of [day]'s ISO week. */
@@ -55,7 +57,7 @@ object Practices {
         val days = sessionDays(state, quest.id)
         val next = generateSequence(today) { it.plus(1, DateTimeUnit.DAY) }.take(15).firstOrNull { wantsSession(rhythm, days, it) }
             ?: today.plus(1, DateTimeUnit.DAY)
-        return Status(rhythm, week(rhythm, days, today), dueToday = next == today, nextSessionDay = next)
+        return Status(rhythm, week(rhythm, days, today), dueToday = next == today, nextSessionDay = next, doneToday = today in days)
     }
 
     /** Session days from [from] to [to] the rhythm asks for, after [today]'s sessions so far. */

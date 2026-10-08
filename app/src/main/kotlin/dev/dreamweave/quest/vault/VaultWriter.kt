@@ -52,7 +52,7 @@ class VaultWriter(private val context: Context) {
     private fun root(treeUri: Uri): DocumentFile {
         val root = DocumentFile.fromTreeUri(context, treeUri) ?: throw VaultException("The vault folder is no longer available.")
         // Without the grant, DocumentFile calls fail quietly (empty listings, null results).
-        if (!root.canWrite()) throw VaultException("Folder access lost. Choose the vault folder again in Settings.")
+        if (!root.canWrite()) throw VaultException("Folder access lost. Choose the vault folder in Settings to resume.")
         return root
     }
 

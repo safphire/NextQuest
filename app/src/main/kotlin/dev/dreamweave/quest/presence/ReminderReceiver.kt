@@ -8,6 +8,7 @@ import android.util.Log
 import dev.dreamweave.quest.AppContainer
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Views
+import dev.dreamweave.quest.data.QuestActions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
@@ -46,7 +47,7 @@ class ReminderReceiver : BroadcastReceiver() {
         val zone = c.repository.zone
         when (intent.action) {
             ACTION_FIRE_DIGEST -> {
-                val today = Views.today(state, now, zone)
+                val today = Views.today(state, now, zone, c.settings.current().stuckDays)
                 // Nothing tracked: stay quiet (re-entry without guilt). The alarm still re-arms.
                 if (today.cards.isNotEmpty()) Notifications.digest(context, today.cards, today.streak.current)
             }
@@ -66,14 +67,26 @@ class ReminderReceiver : BroadcastReceiver() {
                     val step = state.steps.getValue(stepId)
                     val quest = state.quests.getValue(step.questId)
                     Notifications.stepReminder(context, quest, step, asAlarm = step.alarm)
-                    c.scheduler.markFired(step.id, ReminderPlan.reminderTime(step) ?: now)
+                    // A practice's reminder is marked with when it fired, so tomorrow's is next.
+                    c.scheduler.markFired(step.id, if (quest.isPractice) now else ReminderPlan.reminderTime(step) ?: now)
+                } else if (state.steps[stepId]?.let { state.quests[it.questId]?.isPractice } == true) {
+                    c.scheduler.markFired(stepId, now)
                 }
             }
             // A stale notification (its step was done or replaced elsewhere) is only removed:
             // Done must never complete — and reward — a step that is no longer current.
             ACTION_DONE -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)
-                if (ReminderPlan.isOpenStep(state, stepId)) c.actions.completeStepFromNotification(stepId)
+                if (ReminderPlan.isOpenStep(state, stepId)) {
+                    val text = state.steps.getValue(stepId).text
+                    val r = c.actions.completeStepFromNotification(stepId)
+                    // Undo stays available for 5 minutes, from a silent confirmation (B2).
+                    QuestActions.completionOf(r)?.let { Notifications.undoConfirmation(context, it, stepId, text) }
+                }
+            }
+            ACTION_UNDO -> intent.getStringExtra(EXTRA_EVENT_ID)?.let { eventId ->
+                Notifications.cancelUndo(context, eventId)
+                c.actions.undo(eventId)
             }
             ACTION_SNOOZE -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)
@@ -81,7 +94,10 @@ class ReminderReceiver : BroadcastReceiver() {
             }
             ACTION_SKIP -> if (stepId != null) {
                 Notifications.cancelStep(context, stepId)
-                if (ReminderPlan.isOpenStep(state, stepId)) c.actions.dismissReminder(stepId)
+                // Skipping a practice's reminder skips today's only (it already counts as fired);
+                // dismissing the step would silence every session after it.
+                val practice = state.steps[stepId]?.let { state.quests[it.questId]?.isPractice } == true
+                if (!practice && ReminderPlan.isOpenStep(state, stepId)) c.actions.dismissReminder(stepId)
             }
         }
         // Digest and guard re-arm for tomorrow; step actions changed state (the change
@@ -96,6 +112,8 @@ class ReminderReceiver : BroadcastReceiver() {
         const val ACTION_DONE = "dev.dreamweave.quest.reminder.DONE"
         const val ACTION_SNOOZE = "dev.dreamweave.quest.reminder.SNOOZE"
         const val ACTION_SKIP = "dev.dreamweave.quest.reminder.SKIP"
+        const val ACTION_UNDO = "dev.dreamweave.quest.reminder.UNDO"
+        const val EXTRA_EVENT_ID = "dev.dreamweave.quest.extra.EVENT_ID"
         const val EXTRA_STEP_ID = "dev.dreamweave.quest.extra.STEP_ID"
         const val SNOOZE_MS = 60 * 60 * 1000L
         internal const val TAG = "QuestReminders"

@@ -545,3 +545,124 @@ the store password (PKCS12 uses one). CI debug builds number themselves
 (`versionCode = 100 + run number`) so a newer APK is always an update. The keystore can't be generated into the
 repository's secrets from the build session; `docs/RELEASING.md` has the one-time
 steps for the maintainer.
+
+### D-1110 · Practices are quests with a rhythm; sessions are steps
+A practice is a top-level quest with a `rhythm` (daily, chosen weekdays, or N times a
+week, plus an optional reminder time), set on `quest.created` or by
+`quest.rhythm_set`. It is tracked like any quest and uses a slot, so the cap holds on
+every path (UI, import, sync, MCP) without new rules.
+
+Each session is an ordinary step. Completing it logs the session (+15 XP, counts for
+the streak like any step), and the fold itself creates the next session (same text and
+cue, id derived from the completed step), so a practice never shows "Needs next step",
+whichever path completed it (app, widget, notification, proposal). A session completed
+with an explicit next step (an edited text) uses that instead. Practices never
+complete: `quest.completed` and `finishQuest` are refused; park or drop them instead.
+Practices have no subquests (their one visible step is the session).
+
+**No backlog:** practice steps have no due date. Whether a session is due is computed
+from the rhythm and the days that already have one (`Practices.status`): there is no
+"missed" count, no overdue chip, and a skipped week changes nothing but "this week x/N"
+(the number of days with a session this ISO week, against the rhythm's sessions per
+week). Today shows a resting practice as "Next session Thu" without a Done button; Quest
+detail always allows logging one. Practice reminders fire on session days at their
+time; a time that passed while the phone was off is not caught up, and Skip skips that
+day only (dismissing the step would silence every later session).
+
+### D-1111 · Cues, obstacle and plan are plain fields
+A step's `cue` (≤ 200 characters) is set with the step (`step.set`, the `next` of a
+completion) or edited (`step.edited`). In "What's next?", the time chip sets the new
+step's due time (D-1118); "after ___" and "at ___" just start the text. A quest's
+`obstacle` and `plan` (≤ 1,000 characters each) are set by `quest.edited`. MCP reads
+them (`get_quest`, `list_quests`); AI can propose cues through `propose_set_next_step`
+and `propose_schedule_step` (a cue without `due_at` leaves the date alone), but not
+obstacles or plans: those are the user's own words.
+
+### D-1112 · Undo is an exact compensating event
+`completion.undone { eventId }` reverses a `step.completed` or `quest.completed`. The
+fold keeps, for each recent completion, the before- and after-image of every quest and
+step it changed, the counters it added and the streak day it contributed. The undo
+restores the before-images (removing a next step the completion created), subtracts the
+counters and XP, takes the day out of the streak, and drops achievements the lower
+counters no longer earn. It is refused when anything the completion changed has changed
+since (so it can't overwrite later work), when it would break an invariant (a finished
+quest whose slot was taken meanwhile), once undone, or after an hour (the fold's window;
+the app offers 10 seconds, a notification 5 minutes). A property test checks that a log
+with a completion and its undo folds to the same quests, steps, XP, counters, streak,
+achievements and focus blocks as the log without both, incrementally and from scratch.
+The history keeps both lines. Undo is the user taking back a slip, not a penalty, so it
+doesn't contradict "no lost XP".
+
+### D-1113 · Focus blocks and effort XP
+A block that runs to its end writes `focus.block_completed { questId, stepId, minutes,
+local }` right away, before the user answers "Did you finish the step?". It earns +5 XP
+if it is 10–240 minutes, at most 60 effort XP per local day (the device's day, like
+streaks); blocks beyond the cap still count toward focus minutes. Stopping early writes
+nothing and says only "Stopped. The step is here when you want it." The timer is a
+foreground service (special use: a user-started timer) with a chronometer notification
+and an exact alarm for the end, so it survives backgrounding and Doze; the running block
+is kept on disk, so it also survives process death. Presets are 10 / 25 / 50 minutes,
+the last choice is remembered. The full-screen view shows the step and the time left;
+Pause and Stop are two quiet text buttons (also in the notification), since a timer
+without a way to stop it would trap the user. Achievements: "Deep breath, deep work"
+(first block) and "Ten focused hours" (600 minutes).
+
+### D-1114 · AI breakdown through the share sheet
+"Ask AI to break this down" builds a prompt in `:core` (`Breakdown.prompt`: title, why,
+obstacle, plan, current step and cue, existing subquests; asks for 3–7 subquests, the
+first under 10 minutes) and opens the Android share sheet. When a server is paired, the
+prompt asks the assistant to submit them with `propose_add_subquest` (they arrive as
+proposals); otherwise to reply one per line. Pasting such a reply into capture saves one
+inbox item per line (list markers removed). A single shared text (the share target)
+stays one item: only a multi-line paste in the capture field becomes a list.
+
+### D-1115 · Fresh start, and when it is offered
+`reset.fresh_start` clears snoozes, dismissed reminders and past due times (and their
+alarms) on the open steps of tracked quests; future dates stay. With `parkOthers` it
+parks every tracked quest except the one picked (refused without one). XP, level,
+achievements and streaks are untouched. The offer (C2) appears on the first open of a
+day after 2+ days away, or of a new week (weeks start on Monday) or month, on the resume
+card next to "Pick up where you left off". Choosing the latter counts as a dismissal;
+two in a row pause the offer for 30 days; using Fresh start resets the count. The
+bookkeeping (last open day, dismissals, pause) is device-local, in DataStore.
+
+### D-1116 · Breathe earns nothing
+Breathe is cyclic sighing: inhale 2.5 s, a short top-up inhale 1 s, a long exhale
+5.5 s, for 1, 3 or 5 minutes. It writes no event and earns no XP, so rewards stay tied
+to work. It doesn't rely on the animation: the phase is in words and there is a breath
+count and time left, and every phase has a haptic cue played by a foreground service
+holding a partial wake lock for the session (vibrations use the alarm usage so they
+keep playing with the screen off).
+
+### D-1117 · Forgiveness first
+After a day without a completed step, the next open shows one line (four variants,
+rotating by day) with Set step / Dismiss: for people who have done steps before and
+were around recently (after 2+ days away the resume card speaks instead); not once a
+step is done today, and not again the day it was dismissed. The lines never mention the
+streak. When the current streak is below the best one, Trophies shows the best streak
+as "yours to keep".
+
+### D-1118 · A time cue that already passed means tomorrow
+The brief says a time cue sets the due time "today". A time that has already passed
+today would make the step due at once (and its reminder fire immediately), so it is
+set for tomorrow at that time instead.
+
+### D-1119 · The brief's Fresh start line keeps "missed"
+"Missed" is banned in user-facing copy except in the forgiveness line, but the brief
+itself gives Fresh start the line "Clean slate. Nothing you missed carries forward." It
+is used verbatim, and the banned-word test allows "missed" in exactly those strings.
+
+### D-1120 · v1.1 copy lives in strings.xml
+All new v1.1 copy (Reset, Breathe, Shrink, Fresh start, resume card, forgiveness,
+Stuck?, focus timer, undo, cues, obstacle and plan, practices) is one section of
+`app/src/main/res/values/strings.xml`, so it can be reviewed in one place. A unit test
+scans that file and every string literal in `:app`, `:data` and `:core` for banned words
+(overdue, failed, missed, lazy, behind, again); older copy that used "again" was
+reworded.
+
+### D-1121 · Stuck? is measured from the step itself
+A step's `touchedAt` moves when it is set, edited, rescheduled or focused on. A tracked
+quest (not a practice) whose visible step is untouched for N days (setting 2–7, default
+3) shows a neutral "Stuck?" chip: no colour, no count. Its sheet offers Shrink (rewrites
+the step in place, so its date and cue stay), Focus 10 min, Park it, and Ask Claude to
+break it down. The digest names at most one stuck quest.

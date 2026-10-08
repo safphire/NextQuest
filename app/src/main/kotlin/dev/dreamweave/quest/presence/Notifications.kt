@@ -28,12 +28,19 @@ object Notifications {
     const val CH_STREAK = "streak"
     const val CH_REMINDERS = "reminders"
     const val CH_ALARMS = "alarms"
+    const val CH_FOCUS = "focus"
 
     const val ID_DIGEST = 1
     const val ID_GUARD = 2
 
     /** Every step notification uses this id with the step id as its tag, so two steps never collide. */
     const val ID_STEP = 3
+
+    /** "Done · Undo" after a notification Done, tagged with the completion's event id. */
+    const val ID_UNDO = 4
+
+    /** How long a notification Done can be undone from its confirmation. */
+    const val UNDO_NOTIFICATION_MS = 5 * 60 * 1000L
 
     /**
      * Unique per step, set as the data of every step intent (alarm, notification actions,
@@ -63,6 +70,10 @@ object Notifications {
                         AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
                     )
                     enableVibration(true)
+                },
+                // The running timer is silent; the end of a block chimes with the default sound.
+                NotificationChannel(CH_FOCUS, context.getString(R.string.focus_channel), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = context.getString(R.string.focus_channel_description)
                 },
             ),
         )
@@ -100,9 +111,16 @@ object Notifications {
         }
     }
 
+    /**
+     * The morning digest: each tracked quest's one step (with its when/where cue), practices
+     * only on days they want a session, and at most one gentle "Stuck?" mention.
+     */
     fun digest(context: Context, cards: List<TodayCard>, streak: Int) {
         val title = if (cards.isEmpty()) "Nothing tracked today" else "Today: ${cards.size} quest${if (cards.size == 1) "" else "s"}"
-        val lines = cards.map { c -> "${c.quest.title} — ${c.step?.text ?: "needs a next step"}" }
+        val lines = cards.filter { it.practice == null || it.practice!!.dueToday }.map { c ->
+            val step = c.step?.let { s -> s.text + (s.cue?.let { " ($it)" } ?: "") } ?: "needs a next step"
+            if (c.practice != null) "${c.quest.title} — session: $step" else "${c.quest.title} — $step"
+        } + listOfNotNull(cards.firstOrNull { it.stuck }?.let { "Stuck? “${it.quest.title}” might just need a smaller step." })
         val style = NotificationCompat.InboxStyle().also { s -> lines.take(7).forEach { s.addLine(it) } }
         if (streak > 0) style.setSummaryText("Streak: $streak day${if (streak == 1) "" else "s"}")
         val capture = NotificationCompat.Action(0, "Capture", openApp(context, 11, action = MainActivity.ACTION_CAPTURE))
@@ -213,6 +231,35 @@ object Notifications {
             .setAutoCancel(true)
             .setSilent(true)
         post(context, stepId, ID_STEP, builder.build())
+    }
+
+    /**
+     * After Done from a notification: a silent "Done · step" with Undo, which goes away after
+     * 5 minutes (B2).
+     */
+    fun undoConfirmation(context: Context, eventId: String, stepId: String, stepText: String) {
+        val undo = PendingIntent.getBroadcast(
+            context, 0,
+            Intent(context, ReminderReceiver::class.java).setAction(ReminderReceiver.ACTION_UNDO)
+                .setData(Uri.parse("quest-undo://event/$eventId"))
+                .putExtra(ReminderReceiver.EXTRA_EVENT_ID, eventId)
+                .putExtra(ReminderReceiver.EXTRA_STEP_ID, stepId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = NotificationCompat.Builder(context, CH_REMINDERS)
+            .setSmallIcon(R.drawable.ic_stat_quest)
+            .setContentTitle(context.getString(R.string.undo_notification_title, stepText))
+            .setContentText(context.getString(R.string.undo_notification_text))
+            .addAction(0, context.getString(R.string.undo), undo)
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(UNDO_NOTIFICATION_MS)
+            .build()
+        post(context, eventId, ID_UNDO, n)
+    }
+
+    fun cancelUndo(context: Context, eventId: String) {
+        NotificationManagerCompat.from(context).cancel(eventId, ID_UNDO)
     }
 
     fun cancelStep(context: Context, stepId: String) {

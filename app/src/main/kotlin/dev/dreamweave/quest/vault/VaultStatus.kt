@@ -28,7 +28,7 @@ object VaultStatus {
     /** A message fit for the user: our own wording, never a raw path or stack detail. */
     fun describe(what: String, e: Throwable): String = when (e) {
         is VaultException -> "$what: ${e.message}"
-        is SecurityException -> "$what: folder access lost. Choose the vault folder again."
+        is SecurityException -> "$what: folder access lost. Choose the vault folder in Settings to resume."
         else -> "$what: couldn't write to the vault folder. Is it still there?"
     }
 }

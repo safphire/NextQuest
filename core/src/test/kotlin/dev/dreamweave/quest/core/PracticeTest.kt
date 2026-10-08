@@ -174,6 +174,7 @@ class PracticeTest {
         val card = Views.today(s.state, s.now, s.tz).cards.single { it.quest.id == q }
         assertNotNull(card.practice)
         assertTrue(card.practice!!.dueToday)
+        assertFalse(card.practice!!.doneToday)
         assertFalse(card.stuck)
     }
 }

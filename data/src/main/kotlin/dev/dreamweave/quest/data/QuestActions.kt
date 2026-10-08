@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest.data
 
+import dev.dreamweave.quest.core.CaptureText
 import dev.dreamweave.quest.core.Completion
+import dev.dreamweave.quest.core.CompletionUndone
 import dev.dreamweave.quest.core.Decision
+import dev.dreamweave.quest.core.EventTypes
 import dev.dreamweave.quest.core.Events
+import dev.dreamweave.quest.core.FocusBlockCompleted
+import dev.dreamweave.quest.core.FreshStart
 import dev.dreamweave.quest.core.Ids
 import dev.dreamweave.quest.core.LocalStamp
 import dev.dreamweave.quest.core.NextStep
@@ -15,8 +20,10 @@ import dev.dreamweave.quest.core.QuestCompleted
 import dev.dreamweave.quest.core.QuestCreated
 import dev.dreamweave.quest.core.QuestEdited
 import dev.dreamweave.quest.core.QuestFocusSet
+import dev.dreamweave.quest.core.QuestRhythmSet
 import dev.dreamweave.quest.core.QuestStatus
 import dev.dreamweave.quest.core.QuestStatusSet
+import dev.dreamweave.quest.core.Rhythm
 import dev.dreamweave.quest.core.SlotCapSet
 import dev.dreamweave.quest.core.StepCompleted
 import dev.dreamweave.quest.core.StepEdited
@@ -37,9 +44,46 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
     private fun stamp() = LocalStamp.of(clock(), repo.zone)
     private suspend fun commit(vararg p: PendingEvent) = repo.commit(p.toList())
 
-    /** Capture never forces sorting: the quest lands in the inbox with no step required. */
-    suspend fun capture(title: String): CommitResult =
-        commit(Events.questCreated(QuestCreated(id(), title)))
+    /**
+     * Capture never forces sorting: the quest lands in the inbox with no step required.
+     * [rhythm] makes it a practice (v1.1).
+     */
+    suspend fun capture(title: String, rhythm: Rhythm? = null): CommitResult =
+        commit(Events.questCreated(QuestCreated(id(), title.trim(), rhythm = rhythm)))
+
+    /** A pasted list (e.g. an AI's breakdown): one inbox item per line, list markers removed. */
+    suspend fun captureList(text: String): CommitResult = captureMany(CaptureText.items(text))
+
+    /** Makes a top-level quest a practice with [rhythm], changes its rhythm, or (null) makes it a plain quest. */
+    suspend fun setRhythm(questId: String, rhythm: Rhythm?): CommitResult =
+        commit(Events.questRhythmSet(QuestRhythmSet(questId, rhythm)))
+
+    /** Mental contrasting: what's in the way, and the if-then plan for it. Blank clears. */
+    suspend fun editObstacle(questId: String, obstacle: String? = null, plan: String? = null): CommitResult =
+        commit(
+            Events.questEdited(
+                QuestEdited(
+                    questId,
+                    obstacle = obstacle?.takeIf { it.isNotBlank() }, clearObstacle = obstacle != null && obstacle.isBlank(),
+                    plan = plan?.takeIf { it.isNotBlank() }, clearPlan = plan != null && plan.isBlank(),
+                ),
+            ),
+        )
+
+    /** A focus block on [stepId] ran to its end (stopping early writes nothing). */
+    suspend fun focusBlockDone(questId: String, stepId: String, minutes: Int): CommitResult =
+        commit(Events.focusBlockCompleted(FocusBlockCompleted(questId, stepId, minutes, stamp())))
+
+    /** Reverses the completion [eventId] (B2). Refused when it can't be undone exactly. */
+    suspend fun undo(eventId: String): CommitResult = commit(Events.completionUndone(CompletionUndone(eventId)))
+
+    /** "Clean slate" (C1): see [FreshStart]. */
+    suspend fun freshStart(keepQuestId: String? = null, parkOthers: Boolean = false): CommitResult =
+        commit(Events.freshStart(FreshStart(keepQuestId, parkOthers)))
+
+    /** Sets or clears a step's when/where cue ("" or blank clears). */
+    suspend fun setCue(stepId: String, cue: String): CommitResult =
+        commit(Events.stepEdited(StepEdited(stepId, cue = cue.takeIf { it.isNotBlank() }, clearCue = cue.isBlank())))
 
     /** Brain dump from first launch / share sheet: many quests in one commit. */
     suspend fun captureMany(titles: List<String>, status: QuestStatus = QuestStatus.INBOX): CommitResult {
@@ -54,8 +98,8 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
     suspend fun edit(questId: String, title: String? = null, why: String? = null, clearWhy: Boolean = false): CommitResult =
         commit(Events.questEdited(QuestEdited(questId, title, why, clearWhy)))
 
-    suspend fun setStep(questId: String, text: String, dueAt: Long? = null, alarm: Boolean = false): CommitResult =
-        commit(Events.stepSet(StepSet(id(), questId, text, dueAt, alarm)))
+    suspend fun setStep(questId: String, text: String, dueAt: Long? = null, alarm: Boolean = false, cue: String? = null): CommitResult =
+        commit(Events.stepSet(StepSet(id(), questId, text, dueAt, alarm, cue?.takeIf { it.isNotBlank() })))
 
     suspend fun schedule(stepId: String, dueAt: Long?, alarm: Boolean): CommitResult =
         commit(Events.stepEdited(StepEdited(stepId, dueAt = dueAt, clearDue = dueAt == null, alarm = alarm)))
@@ -127,12 +171,18 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
      * Done from the app: always paired with the next step (the "What's next?" sheet) or
      * with finishing the quest. [Completion.plan] says which quest gets the next step.
      */
-    suspend fun completeStep(stepId: String, nextStepText: String?, finishOwner: Boolean): CommitResult {
+    suspend fun completeStep(
+        stepId: String,
+        nextStepText: String?,
+        finishOwner: Boolean,
+        nextDueAt: Long? = null,
+        nextCue: String? = null,
+    ): CommitResult {
         val state = repo.current()
         if (state.steps[stepId] == null) return CommitResult.Rejected("That step no longer exists.")
         val plan = Completion.plan(state, stepId, finishOwner)
         return commit(
-            Events.stepCompleted(StepCompleted(stepId, StepVia.APP, finishOwner, nextOf(plan.nextOwnerId, nextStepText), stamp())),
+            Events.stepCompleted(StepCompleted(stepId, StepVia.APP, finishOwner, nextOf(plan.nextOwnerId, nextStepText, nextDueAt, nextCue), stamp())),
         )
     }
 
@@ -141,12 +191,18 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
         commit(Events.stepCompleted(StepCompleted(stepId, StepVia.NOTIFICATION, local = stamp())))
 
     /** Done from the widget's "What's next?" dialog: like the app, with a next step or finishing. */
-    suspend fun completeStepFromWidget(stepId: String, nextStepText: String?, finishOwner: Boolean): CommitResult {
+    suspend fun completeStepFromWidget(
+        stepId: String,
+        nextStepText: String?,
+        finishOwner: Boolean,
+        nextDueAt: Long? = null,
+        nextCue: String? = null,
+    ): CommitResult {
         val state = repo.current()
         if (state.steps[stepId] == null) return CommitResult.Rejected("That step no longer exists.")
         val plan = Completion.plan(state, stepId, finishOwner)
         return commit(
-            Events.stepCompleted(StepCompleted(stepId, StepVia.WIDGET, finishOwner, nextOf(plan.nextOwnerId, nextStepText), stamp())),
+            Events.stepCompleted(StepCompleted(stepId, StepVia.WIDGET, finishOwner, nextOf(plan.nextOwnerId, nextStepText, nextDueAt, nextCue), stamp())),
         )
     }
 
@@ -180,8 +236,14 @@ class QuestActions(private val repo: QuestRepository, private val clock: () -> L
         return accepted
     }
 
-    private fun nextOf(ownerId: String?, text: String?): NextStep? {
+    private fun nextOf(ownerId: String?, text: String?, dueAt: Long? = null, cue: String? = null): NextStep? {
         val t = text?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        return NextStep(id(), ownerId ?: return null, t)
+        return NextStep(id(), ownerId ?: return null, t, dueAt = dueAt, cue = cue?.trim()?.takeIf { it.isNotEmpty() })
+    }
+
+    companion object {
+        /** The completion event a successful Done wrote: what Undo reverses. */
+        fun completionOf(result: CommitResult): String? =
+            (result as? CommitResult.Ok)?.change?.events?.lastOrNull { it.type == EventTypes.STEP_COMPLETED || it.type == EventTypes.QUEST_COMPLETED }?.id
     }
 }

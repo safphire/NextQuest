@@ -169,7 +169,7 @@ fun VaultSection(vm: QuestViewModel, settings: AppSettings) {
                 when {
                     settings.vaultUri == null ->
                         "Pick a folder (e.g. your Obsidian vault). Each quest becomes a Markdown note, and a full backup is written there every day. One-way: edits in the folder don't come back."
-                    accessLost -> "Folder access lost — choose it again."
+                    accessLost -> "Folder access lost. Choose the folder in Settings to resume."
                     else -> "Mirroring to “${folderName ?: "your folder"}”." +
                         (settings.lastVaultSnapshotAt?.let { " Last backup ${Format.longDate(it, vm.zone)}." } ?: "")
                 },
@@ -185,7 +185,7 @@ fun VaultSection(vm: QuestViewModel, settings: AppSettings) {
                     LimeButton("Choose folder", onClick = { pickFolder.launch(null) })
                 } else {
                     if (accessLost) {
-                        LimeButton("Choose folder again", onClick = { pickFolder.launch(null) })
+                        LimeButton("Choose the folder", onClick = { pickFolder.launch(null) })
                     } else {
                         QuietButton("Mirror now", onClick = {
                             VaultWorker.mirrorSoon(context, delaySeconds = 0)

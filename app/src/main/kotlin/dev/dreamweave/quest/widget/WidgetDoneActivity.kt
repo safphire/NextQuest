@@ -10,6 +10,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import dev.dreamweave.quest.QuestApp
+import dev.dreamweave.quest.R
 import dev.dreamweave.quest.data.ThemeMode
 import dev.dreamweave.quest.presence.ReminderPlan
 import dev.dreamweave.quest.ui.sheets.WhatsNextSheet
@@ -49,15 +50,33 @@ class WidgetDoneActivity : ComponentActivity() {
                     }
                     return@QuestTheme
                 }
+                // A practice session needs no "What's next?": the next session appears by itself.
+                if (s.steps[stepId]?.let { s.quests[it.questId] }?.isPractice == true) {
+                    LaunchedEffect(stepId) {
+                        if (!committing) {
+                            committing = true
+                            val r = Calm.commit(TAG, "widget session") { c.actions.completeStepFromWidget(stepId, null, false) }
+                            val text = when (r) {
+                                is ActionOutcome.Done -> getString(R.string.practice_session_done, (r.change.after.xp - r.change.before.xp).toInt())
+                                is ActionOutcome.Refused -> r.message
+                                is ActionOutcome.Failed -> r.message
+                            }
+                            Toast.makeText(this@WidgetDoneActivity, text, Toast.LENGTH_SHORT).show()
+                            finish()
+                        }
+                    }
+                    return@QuestTheme
+                }
                 WhatsNextSheet(
                     state = s,
                     stepId = stepId,
                     onCancel = { finish() },
-                    onConfirm = { next, finishOwner ->
+                    zone = c.repository.zone,
+                    onConfirm = { next, finishOwner, dueAt, cue ->
                         if (!committing) {
                             committing = true
                             lifecycleScope.launch {
-                                val r = Calm.commit(TAG, "widget Done") { c.actions.completeStepFromWidget(stepId, next, finishOwner) }
+                                val r = Calm.commit(TAG, "widget Done") { c.actions.completeStepFromWidget(stepId, next, finishOwner, dueAt, cue) }
                                 val text = when (r) {
                                     is ActionOutcome.Done -> "+${r.change.after.xp - r.change.before.xp} XP"
                                     is ActionOutcome.Refused -> r.message
