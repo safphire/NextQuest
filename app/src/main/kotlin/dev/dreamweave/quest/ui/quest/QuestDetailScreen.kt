@@ -79,7 +79,7 @@ import androidx.compose.material.icons.rounded.SearchOff
 
 /** Every prompt this screen can show, one at a time. */
 @Serializable
-private sealed interface Prompt {
+internal sealed interface Prompt {
     @Serializable
     data object Rename : Prompt
     @Serializable

@@ -383,6 +383,49 @@ class SyncIntegrationTest {
         assertTrue(server.log.any { it.payload.toString().contains(late.id) }, "the lost push was sent again")
     }
 
+    /** A push the server stored but whose reply was lost comes back as duplicates: that still sets the watermark. */
+    @Test
+    fun aPushConfirmedOnlyAsDuplicates_isStillWatched() = runBlocking<Unit> {
+        val server = MemoryServer()
+        var loseReply = false
+        var pullFails = false
+        val memory: SyncTransport = server
+        val transport = object : SyncTransport by memory {
+            override suspend fun push(server: String, token: String, request: PushRequest): PushResponse {
+                val r = memory.push(server, token, request)
+                if (loseReply && request.events.isNotEmpty()) throw IOException("reply lost")
+                return r
+            }
+            override suspend fun pull(server: String, token: String, after: Long, limit: Int): PullResponse =
+                if (pullFails && limit > 1) throw IOException("connection dropped") else memory.pull(server, token, after, limit)
+        }
+        val phone = Phone(transport)
+        assertNull(phone.engine.pair("https://quests.example.com", "CODE", "Pixel"))
+        phone.actions.capture("Pulled and safe")
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        val backup = server.log.size
+
+        phone.actions.capture("Stored, reply lost")
+        loseReply = true
+        pullFails = true
+        assertIs<SyncOutcome.Failed>(phone.engine.sync())
+        loseReply = false
+        assertEquals(1, phone.repo.unpushedCount())
+        assertEquals(backup.toLong(), phone.settings.current().syncCursor)
+        // Next round: re-sent, confirmed only as a duplicate, and the pull fails again.
+        assertIs<SyncOutcome.Failed>(phone.engine.sync())
+        pullFails = false
+        assertEquals(0, phone.repo.unpushedCount())
+        assertTrue(phone.settings.current().syncPushedThrough > backup)
+
+        val late = phone.repo.current().quests.values.single { it.title == "Stored, reply lost" }
+        server.restoreBackup(keep = backup)
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        assertTrue(server.log.any { it.payload.toString().contains(late.id) }, "the lost push was sent again")
+        // The pull passed the watermark, so it is cleared (no extra probes from now on).
+        assertEquals(0, phone.settings.current().syncPushedThrough)
+    }
+
     @Test
     fun pairingRefusesNonHttpAddressesAndWrongCodes() = withServer { services, http ->
         val phone = Phone(KtorSyncTransport(http))

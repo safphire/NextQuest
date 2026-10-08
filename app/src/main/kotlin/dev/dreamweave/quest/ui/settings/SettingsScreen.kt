@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,7 +79,7 @@ fun SettingsScreen(
     onPairHandled: () -> Unit,
 ) {
     val c = Quest.colors
-    var timeDialog by remember { mutableStateOf<String?>(null) }
+    var timeDialog by rememberSaveable { mutableStateOf<String?>(null) }
     var licenses by remember { mutableStateOf(false) }
 
     LazyColumn(

@@ -65,7 +65,7 @@ import dev.dreamweave.quest.util.Format
 
 /** Follow-up questions an acceptance may need. */
 @Serializable
-private sealed interface Ask {
+internal sealed interface Ask {
     @Serializable
     data class Edit(val proposalId: String) : Ask
 

@@ -69,7 +69,7 @@ import dev.dreamweave.quest.ui.theme.Quest
 
 /** Tracking can need two answers: a first step, and which quest to park when slots are full. */
 @Serializable
-private data class TrackFlow(val questId: String, val step: String? = null, val needsSwap: Boolean = false)
+internal data class TrackFlow(val questId: String, val step: String? = null, val needsSwap: Boolean = false)
 
 @Composable
 fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {

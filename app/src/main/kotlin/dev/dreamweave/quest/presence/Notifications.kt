@@ -138,13 +138,15 @@ object Notifications {
      * A due step with Done / Snooze 1h / Skip. As an alarm it also gets a full-screen intent.
      * [silent]: posted without sound or vibration (the alarm screen was closed with Back).
      */
+    private fun stepAction(context: Context, stepId: String, kind: String): PendingIntent = PendingIntent.getBroadcast(
+        context, 0,
+        Intent(context, ReminderReceiver::class.java).setAction(kind).setData(stepUri(stepId)).putExtra(ReminderReceiver.EXTRA_STEP_ID, stepId),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
     fun stepReminder(context: Context, quest: Quest, step: Step, asAlarm: Boolean, silent: Boolean = false) {
         val uri = stepUri(step.id)
-        fun action(kind: String) = PendingIntent.getBroadcast(
-            context, 0,
-            Intent(context, ReminderReceiver::class.java).setAction(kind).setData(uri).putExtra(ReminderReceiver.EXTRA_STEP_ID, step.id),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        fun action(kind: String) = stepAction(context, step.id, kind)
         val builder = NotificationCompat.Builder(context, if (asAlarm) CH_ALARMS else CH_REMINDERS)
             .setSmallIcon(R.drawable.ic_stat_quest)
             .setContentTitle(step.text)
@@ -185,6 +187,32 @@ object Notifications {
     fun quietStep(context: Context, quest: Quest, step: Step) {
         cancelStep(context, step.id)
         stepReminder(context, quest, step, asAlarm = false, silent = true)
+    }
+
+    /**
+     * [quietStep] when the quest log can't be read: the reminder is rebuilt from the title and
+     * text of the notification that was ringing (or a plain one), silent, with its actions.
+     */
+    fun quietFromShown(context: Context, stepId: String) {
+        val shown = runCatching {
+            context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == ID_STEP && it.tag == stepId }?.notification
+        }.getOrNull()
+        val title = shown?.extras?.getCharSequence(Notification.EXTRA_TITLE) ?: "A step is due"
+        val text = shown?.extras?.getCharSequence(Notification.EXTRA_TEXT)
+        cancelStep(context, stepId)
+        val builder = NotificationCompat.Builder(context, CH_REMINDERS)
+            .setSmallIcon(R.drawable.ic_stat_quest)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setContentIntent(openApp(context, 30, uri = stepUri(stepId)))
+            .addAction(0, "Done", stepAction(context, stepId, ReminderReceiver.ACTION_DONE))
+            .addAction(0, "Snooze 1h", stepAction(context, stepId, ReminderReceiver.ACTION_SNOOZE))
+            .addAction(0, "Skip", stepAction(context, stepId, ReminderReceiver.ACTION_SKIP))
+            .setDeleteIntent(stepAction(context, stepId, ReminderReceiver.ACTION_SKIP))
+            .setAutoCancel(true)
+            .setSilent(true)
+        post(context, stepId, ID_STEP, builder.build())
     }
 
     fun cancelStep(context: Context, stepId: String) {

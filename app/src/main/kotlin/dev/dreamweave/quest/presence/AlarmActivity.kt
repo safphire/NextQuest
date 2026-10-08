@@ -98,20 +98,36 @@ class AlarmActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID)?.let { shownStepId = it }
+        val next = intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID) ?: return
+        // The alarm on screen is replaced: it stops ringing and stays as a silent reminder.
+        shownStepId?.takeIf { it != next }?.let { previous -> quiet((application as QuestApp).container, previous, then = {}) }
+        shownStepId = next
     }
 
-    /** Silences the alarm and leaves a normal, silent reminder for the step (if it is still open). */
-    internal fun quiet(c: AppContainer, stepId: String) {
-        val state = c.repository.state.value
-        val step = state?.steps?.get(stepId)
-        val quest = step?.let { state.quests[it.questId] }
-        if (state != null && step != null && quest != null && ReminderPlan.isOpenStep(state, stepId)) {
-            runCatching { Notifications.quietStep(this, quest, step) }.onFailure { Notifications.cancelStep(this, stepId) }
-        } else {
-            Notifications.cancelStep(this, stepId)
+    /**
+     * Silences the alarm and leaves a normal, silent reminder for the step (if it is still
+     * open), then runs [then] (finish, by default). When the log can't be read, the reminder
+     * is rebuilt from the notification that was ringing, so Back never loses it.
+     */
+    internal fun quiet(c: AppContainer, stepId: String, then: () -> Unit = { finish() }) {
+        fun apply(state: dev.dreamweave.quest.core.QuestState?) {
+            val step = state?.steps?.get(stepId)
+            val quest = step?.let { state.quests[it.questId] }
+            when {
+                state == null -> Notifications.quietFromShown(this, stepId)
+                step != null && quest != null && ReminderPlan.isOpenStep(state, stepId) ->
+                    runCatching { Notifications.quietStep(this, quest, step) }.onFailure { Notifications.quietFromShown(this, stepId) }
+                // Done, replaced or removed elsewhere: nothing left to remind about.
+                else -> Notifications.cancelStep(this, stepId)
+            }
+            then()
         }
-        finish()
+        val loaded = c.repository.state.value
+        if (loaded != null) {
+            apply(loaded)
+        } else {
+            lifecycleScope.launch { apply(Calm.attempt(TAG, "loading the log") { c.repository.current() }) }
+        }
     }
 
     private fun close(stepId: String) {
@@ -141,7 +157,8 @@ class AlarmActivity : ComponentActivity() {
 
     @Composable
     private fun AlarmScreen(c: AppContainer, stepId: String) {
-        LaunchedEffect(Unit) { Calm.attempt(TAG, "loading the log") { c.repository.load() } }
+        var loadFailed by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { if (Calm.attempt(TAG, "loading the log") { c.repository.load() } == null) loadFailed = true }
         val state by c.repository.state.collectAsState()
         val s = state
         val step = s?.steps?.get(stepId)
@@ -242,6 +259,11 @@ class AlarmActivity : ComponentActivity() {
             } else if (s != null) {
                 // Done, replaced or removed elsewhere: nothing left to act on.
                 LimeButton("Close", onClick = { close(stepId) })
+            } else if (loadFailed) {
+                Text(Calm.MESSAGE, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(12.dp))
+                // Keeps a silent reminder in the shade, like Back.
+                LimeButton("Close", onClick = { quiet(c, stepId) })
             }
         }
     }

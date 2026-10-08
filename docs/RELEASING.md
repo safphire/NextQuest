@@ -52,16 +52,20 @@ signed with a throwaway key. Uninstall once (export a snapshot first: Settings
 → Vault → Export), install, import the snapshot. From then on updates install
 in place.
 
-CI debug builds also number themselves (`versionCode = 100 + run number`), so a
-newer CI APK is always an update. A local `./gradlew :app:installDebug` build
-has version code 100 and a different key: it won't install over a CI build.
+CI debug builds also number themselves (`versionCode = 100 + run number`, passed
+as `QUEST_VERSION_CODE`), so a newer CI APK is always an update. A local
+`./gradlew :app:installDebug` build has version code 100 and a different key: it
+won't install over a CI build. The keystore and its passwords are only given to the
+step that assembles the APK, and the APK is uploaded right after it.
 
 ## Release signing
 
 The signed release workflow (`.github/workflows/release.yml`) runs on `v*`
 tags or by hand. It needs `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`,
 `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`; without them it only explains
-what is missing. Generate the release key the same way as above, with its own
+what is missing. Set `QUEST_VERSION_CODE` for release builds so each release's
+version code is higher than the last (the CI debug numbering doesn't apply there).
+Generate the release key the same way as above, with its own
 alias and a strong password, and keep an offline backup: an app signed with a
 lost release key can never be updated.
 

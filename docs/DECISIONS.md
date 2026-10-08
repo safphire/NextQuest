@@ -500,14 +500,20 @@ pull after a push that stored something). Each round checks it like the pull cur
 if the server's latest cursor is lower, or a different event sits there (restored,
 then overtaken by other devices), the phone marks its log unpushed and re-sends it.
 The pull cursor is kept, since that part of the server is intact. A false alarm only
-costs a re-upload the server deduplicates. The watermark lives in DataStore, so no
+costs a re-upload the server deduplicates. A push the server confirms only as
+duplicates (its earlier reply was lost) moves the watermark too, and once a pull has
+passed the watermark it is cleared, since the pull-cursor check then covers it. Both
+checks share one empty-push probe per round. The watermark lives in DataStore, so no
 Room schema change was needed.
 
 ### D-1103 · Back on the alarm screen
 Back stops the ringing (the insistent alarm notification is cancelled) and posts the
 same step reminder on the normal Reminders channel, silent, with Done / Snooze 1h /
 Skip. The step itself is untouched: nothing is snoozed or dismissed, because Back is
-"not now, not here", not a decision about the step.
+"not now, not here", not a decision about the step. If the quest log can't be read
+(or hasn't loaded yet), the silent reminder is rebuilt from the notification that was
+ringing, so Back never loses it; the screen then offers Close with a calm line. A
+second alarm replacing the one on screen silences the first the same way.
 
 ### D-1104 · Failures outside the main screen
 The alarm screen, the widget's Done dialog and Settings' sync count used to let a
@@ -532,8 +538,10 @@ which mode the build is in.
 ### D-1107 · Stable debug signing
 CI signs debug APKs with one persistent key from the `DEBUG_KEYSTORE_B64` secret
 (plus password secrets), decoded into the runner's temp folder and deleted at the end
-of the job. Without the secret, CI uses the runner's key and prints a warning in the
-log and the job summary. CI builds number themselves (`versionCode = 100 + run
-number`) so a newer APK is always an update. The keystore can't be generated into the
+of the step that assembles the APK (only that step sees the key and its passwords;
+the APK is uploaded right after it). Without the secret, CI uses the runner's key and
+prints a warning in the log and the job summary. A missing key password falls back to
+the store password (PKCS12 uses one). CI debug builds number themselves
+(`versionCode = 100 + run number`) so a newer APK is always an update. The keystore can't be generated into the
 repository's secrets from the build session; `docs/RELEASING.md` has the one-time
 steps for the maintainer.

@@ -138,7 +138,9 @@ class SyncEngine(
         var pushed = 0
         val refused = linkedMapOf<String, String>() // event id → reason, so a retried refusal counts once
         val pushFailure = try {
-            if (cursor > 0 && serverWasReset(server, token, cursor, cursorEventId)) {
+            // One empty push probes the server's latest cursor for both checks below.
+            val latest = if (cursor > 0 || start.syncPushedThrough > 0) transport.push(server, token, PushRequest(emptyList())).cursor else 0L
+            if (cursor > 0 && serverWasReset(server, token, latest, cursor, cursorEventId)) {
                 // Reset, or restored from an older backup: pull from the start and offer it the
                 // whole log again. Unpushed first: if the round stops in between, the next one
                 // still sees the old cursor and detects the reset again.
@@ -148,7 +150,7 @@ class SyncEngine(
                 }
                 cursor = 0
                 cursorEventId = null
-            } else if (pushesWereLost(server, token, start)) {
+            } else if (pushesWereLost(server, token, latest, start)) {
                 // Restored to a backup taken after our last pull but before some of our pushes:
                 // the pulled part is intact, the pushes after it are gone. Offer the log again
                 // (the server keeps each event once) and forget the watermark.
@@ -187,7 +189,14 @@ class SyncEngine(
             }
             cursor = r.cursor
             cursorEventId = r.events.lastOrNull()?.event?.id ?: cursorEventId
-            settings.update { it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId) }
+            // Once the pull has passed the push watermark, the pull-cursor check covers those pushes.
+            settings.update {
+                if (cursor >= it.syncPushedThrough) {
+                    it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId, syncPushedThrough = 0, syncPushedThroughEventId = null)
+                } else {
+                    it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId)
+                }
+            }
             if (!r.hasMore) break
         }
         if (pushFailure != null) return failure(pushFailure)
@@ -210,8 +219,8 @@ class SyncEngine(
      * ours, or the event at our cursor is a different one (restored from an older backup and
      * since overtaken by other devices' pushes). An empty push is a cheap probe of the latest.
      */
-    private suspend fun serverWasReset(server: String, token: String, cursor: Long, cursorEventId: String?): Boolean {
-        if (transport.push(server, token, PushRequest(emptyList())).cursor < cursor) return true
+    private suspend fun serverWasReset(server: String, token: String, latest: Long, cursor: Long, cursorEventId: String?): Boolean {
+        if (latest < cursor) return true
         if (cursorEventId == null) return false // pulled before ids were remembered
         val at = transport.pull(server, token, cursor - 1, 1).events.firstOrNull()
         return at == null || at.cursor != cursor || at.event.id != cursorEventId
@@ -222,9 +231,9 @@ class SyncEngine(
      * server's latest cursor is below the highest cursor our pushes reached, or another
      * event sits there now (restored, then overtaken by other devices).
      */
-    private suspend fun pushesWereLost(server: String, token: String, s: AppSettings): Boolean {
+    private suspend fun pushesWereLost(server: String, token: String, latest: Long, s: AppSettings): Boolean {
         if (s.syncPushedThrough <= 0) return false
-        if (transport.push(server, token, PushRequest(emptyList())).cursor < s.syncPushedThrough) return true
+        if (latest < s.syncPushedThrough) return true
         val id = s.syncPushedThroughEventId ?: return false
         return !holds(server, token, s.syncPushedThrough, id)
     }
@@ -259,7 +268,8 @@ class SyncEngine(
             if (page.isEmpty()) break
             for (batch in bySize(page)) {
                 val r = transport.push(server, token, PushRequest(batch))
-                if (r.accepted > 0) rememberPushedThrough(server, token, r.cursor)
+                // Duplicates count too: a push whose reply was lost was stored, and is only confirmed now.
+                if (r.accepted + r.duplicates > 0) rememberPushedThrough(server, token, r.cursor)
                 val retryLater = r.rejected.filter { "future" in it.reason }.map { it.id }.toSet()
                 repository.markPushed(batch.map { it.id }.filter { it !in retryLater })
                 val byId = batch.associateBy { it.id }

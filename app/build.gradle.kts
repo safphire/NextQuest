@@ -24,8 +24,9 @@ android {
         applicationId = "dev.dreamweave.quest"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // CI builds count up with the run number, so a newer CI APK is always an update.
-        versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        // CI debug builds count up with the CI run number (QUEST_VERSION_CODE), so a newer CI APK
+        // is always an update. Release builds set their own (docs/RELEASING.md).
+        versionCode = 100 + (System.getenv("QUEST_VERSION_CODE")?.toIntOrNull() ?: 0)
         versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Every instrumented test starts from a fresh install (cleared data, own process).
@@ -43,7 +44,8 @@ android {
                 storeFile = file(debugKeystore)
                 storePassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("DEBUG_KEY_ALIAS")
-                keyPassword = System.getenv("DEBUG_KEY_PASSWORD")
+                // PKCS12 keystores use one password for the store and the key.
+                keyPassword = System.getenv("DEBUG_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: System.getenv("DEBUG_KEYSTORE_PASSWORD")
             }
         }
         if (releaseKeystore != null) {
