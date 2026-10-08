@@ -27,8 +27,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import dev.dreamweave.quest.BuildConfig
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.data.AppSettings
+import dev.dreamweave.quest.data.QuestRepository
 import dev.dreamweave.quest.sync.SyncWorker
 import dev.dreamweave.quest.ui.ExternalRequest
 import dev.dreamweave.quest.ui.QuestViewModel
@@ -37,6 +39,7 @@ import dev.dreamweave.quest.ui.components.QuestCard
 import dev.dreamweave.quest.ui.components.QuietButton
 import dev.dreamweave.quest.ui.components.SectionTitle
 import dev.dreamweave.quest.ui.theme.Quest
+import dev.dreamweave.quest.util.Calm
 import dev.dreamweave.quest.util.Format
 import kotlinx.coroutines.launch
 
@@ -71,11 +74,12 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
             onPairHandled()
         }
     }
-    LaunchedEffect(settings.lastSyncAt, settings.serverUrl) { pending = c.repository.unpushedCount() }
+    // Only a status line: if the count can't be read, it is left out rather than crashing Settings.
+    LaunchedEffect(settings.lastSyncAt, settings.serverUrl) { pending = SyncStatus.pendingCount(c.repository) ?: 0 }
 
     fun pair() {
-        if (!server.trim().startsWith("https://")) {
-            error = "Use the server's https:// address (Android doesn't allow unencrypted connections)."
+        if (!SyncStatus.addressAllowed(server)) {
+            error = "Use the server's https:// address (this build only allows encrypted connections)."
             return
         }
         busy = true
@@ -129,6 +133,7 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
                         style = MaterialTheme.typography.bodySmall, color = colors.textSecondary,
                     )
                 }
+                Text(SyncStatus.modeLine(), style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
                 (error ?: settings.lastSyncError)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.text) }
                 LimeButton(if (busy) "Pairing…" else "Pair", onClick = { pair() }, enabled = !busy && server.isNotBlank() && code.isNotBlank())
             } else {
@@ -140,6 +145,7 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
                     settings.lastSyncError?.let { add(it) }
                 }.joinToString(" ")
                 Text(status, style = MaterialTheme.typography.bodySmall, color = if (settings.lastSyncError != null) colors.text else colors.textSecondary)
+                Text(SyncStatus.modeLine(), style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     QuietButton("Sync now", onClick = {
                         SyncWorker.now(context)
@@ -156,7 +162,7 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
             onDismissRequest = { confirmDisconnect = false },
             containerColor = colors.surface,
             title = { Text("Disconnect from the server?") },
-            text = { Text("Nothing is deleted on this phone or on the server. Proposals from AI stop arriving until you pair again.") },
+            text = { Text("Nothing is deleted on this phone or on the server. Proposals from AI stop arriving until you pair with a server.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDisconnect = false
@@ -167,4 +173,23 @@ fun SyncSection(vm: QuestViewModel, settings: AppSettings, pairRequest: External
             dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancel") } },
         )
     }
+}
+
+/** Sync status reads for Settings; each one fails quietly (null) instead of crashing the screen. */
+object SyncStatus {
+    /** Release builds talk to the server over HTTPS only; debug builds also allow plain HTTP for LAN testing. */
+    fun addressAllowed(address: String, allowCleartext: Boolean = BuildConfig.ALLOW_CLEARTEXT): Boolean {
+        val a = address.trim()
+        return a.startsWith("https://") || (allowCleartext && a.startsWith("http://"))
+    }
+
+    /** The connection mode shown in Settings → Sync. */
+    fun modeLine(allowCleartext: Boolean = BuildConfig.ALLOW_CLEARTEXT): String =
+        if (allowCleartext) {
+            "Debug build: plain http:// is allowed, for testing with a server on your local network."
+        } else {
+            "Connections are encrypted (https:// only)."
+        }
+
+    suspend fun pendingCount(repository: QuestRepository): Int? = Calm.attempt("QuestSync", "counting queued changes") { repository.unpushedCount() }
 }

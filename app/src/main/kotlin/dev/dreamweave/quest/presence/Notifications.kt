@@ -134,8 +134,11 @@ object Notifications {
         )
     }
 
-    /** A due step with Done / Snooze 1h / Skip. As an alarm it also gets a full-screen intent. */
-    fun stepReminder(context: Context, quest: Quest, step: Step, asAlarm: Boolean) {
+    /**
+     * A due step with Done / Snooze 1h / Skip. As an alarm it also gets a full-screen intent.
+     * [silent]: posted without sound or vibration (the alarm screen was closed with Back).
+     */
+    fun stepReminder(context: Context, quest: Quest, step: Step, asAlarm: Boolean, silent: Boolean = false) {
         val uri = stepUri(step.id)
         fun action(kind: String) = PendingIntent.getBroadcast(
             context, 0,
@@ -154,6 +157,7 @@ object Notifications {
             .addAction(0, "Skip", action(ReminderReceiver.ACTION_SKIP))
             .setDeleteIntent(action(ReminderReceiver.ACTION_SKIP))
             .setAutoCancel(true)
+            .setSilent(silent)
         if (asAlarm) {
             builder.setOngoing(true)
             if (canUseFullScreen(context)) {
@@ -172,6 +176,15 @@ object Notifications {
         // An alarm keeps sounding until the user acts on it (or the alarm screen closes it).
         if (asAlarm) notification.flags = notification.flags or Notification.FLAG_INSISTENT
         post(context, step.id, ID_STEP, notification)
+    }
+
+    /**
+     * Back on the full-screen alarm: the ringing stops, and a normal reminder without sound
+     * stays in the shade with Done / Snooze / Skip, so the step isn't lost.
+     */
+    fun quietStep(context: Context, quest: Quest, step: Step) {
+        cancelStep(context, step.id)
+        stepReminder(context, quest, step, asAlarm = false, silent = true)
     }
 
     fun cancelStep(context: Context, stepId: String) {

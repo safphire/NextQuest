@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -45,9 +46,9 @@ import dev.dreamweave.quest.AppContainer
 import dev.dreamweave.quest.QuestApp
 import dev.dreamweave.quest.core.Completion
 import dev.dreamweave.quest.core.Xp
-import dev.dreamweave.quest.data.CommitResult
+import dev.dreamweave.quest.util.ActionOutcome
+import dev.dreamweave.quest.util.Calm
 import dev.dreamweave.quest.data.ThemeMode
-import dev.dreamweave.quest.ui.QuestViewModel
 import dev.dreamweave.quest.ui.components.LimeButton
 import dev.dreamweave.quest.ui.components.MetaLabel
 import dev.dreamweave.quest.ui.components.QuietButton
@@ -74,6 +75,16 @@ class AlarmActivity : ComponentActivity() {
         }
         shownStepId = intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID) ?: return finish()
         val c = (application as QuestApp).container
+        // Back stops the ringing but keeps the reminder: a silent notification with
+        // Done / Snooze / Skip stays in the shade.
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    shownStepId?.let { quiet(c, it) } ?: finish()
+                }
+            },
+        )
 
         setContent {
             QuestTheme(ThemeMode.SYSTEM) {
@@ -88,6 +99,19 @@ class AlarmActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.getStringExtra(ReminderReceiver.EXTRA_STEP_ID)?.let { shownStepId = it }
+    }
+
+    /** Silences the alarm and leaves a normal, silent reminder for the step (if it is still open). */
+    internal fun quiet(c: AppContainer, stepId: String) {
+        val state = c.repository.state.value
+        val step = state?.steps?.get(stepId)
+        val quest = step?.let { state.quests[it.questId] }
+        if (state != null && step != null && quest != null && ReminderPlan.isOpenStep(state, stepId)) {
+            runCatching { Notifications.quietStep(this, quest, step) }.onFailure { Notifications.cancelStep(this, stepId) }
+        } else {
+            Notifications.cancelStep(this, stepId)
+        }
+        finish()
     }
 
     private fun close(stepId: String) {
@@ -117,7 +141,7 @@ class AlarmActivity : ComponentActivity() {
 
     @Composable
     private fun AlarmScreen(c: AppContainer, stepId: String) {
-        LaunchedEffect(Unit) { c.repository.load() }
+        LaunchedEffect(Unit) { Calm.attempt(TAG, "loading the log") { c.repository.load() } }
         val state by c.repository.state.collectAsState()
         val s = state
         val step = s?.steps?.get(stepId)
@@ -134,10 +158,14 @@ class AlarmActivity : ComponentActivity() {
                 busy = true
                 error = null
                 lifecycleScope.launch {
-                    when (val r = c.actions.completeStep(stepId, nextText, finishOwner)) {
-                        is CommitResult.Ok -> close(stepId)
-                        is CommitResult.Rejected -> {
-                            error = QuestViewModel.humanize(r.reason)
+                    when (val r = Calm.commit(TAG, "alarm Done") { c.actions.completeStep(stepId, nextText, finishOwner) }) {
+                        is ActionOutcome.Done -> close(stepId)
+                        is ActionOutcome.Refused -> {
+                            error = r.message
+                            busy = false
+                        }
+                        is ActionOutcome.Failed -> {
+                            error = r.message
                             busy = false
                         }
                     }
@@ -168,9 +196,17 @@ class AlarmActivity : ComponentActivity() {
                     })
                     Spacer(Modifier.height(8.dp))
                     QuietButton("Snooze 1h", modifier = Modifier.fillMaxWidth(), onClick = {
-                        lifecycleScope.launch { c.actions.snooze(stepId, System.currentTimeMillis() + ReminderReceiver.SNOOZE_MS); close(stepId) }
+                        lifecycleScope.launch {
+                            val r = Calm.commit(TAG, "alarm Snooze") { c.actions.snooze(stepId, System.currentTimeMillis() + ReminderReceiver.SNOOZE_MS) }
+                            if (r is ActionOutcome.Failed) error = r.message else close(stepId)
+                        }
                     })
-                    TextButton(onClick = { lifecycleScope.launch { c.actions.dismissReminder(stepId); close(stepId) } }) { Text("Dismiss") }
+                    TextButton(onClick = {
+                        lifecycleScope.launch {
+                            val r = Calm.commit(TAG, "alarm Dismiss") { c.actions.dismissReminder(stepId) }
+                            if (r is ActionOutcome.Failed) error = r.message else close(stepId)
+                        }
+                    }) { Text("Dismiss") }
                 } else {
                     Text("What's next?", style = MaterialTheme.typography.titleLarge, color = colors.text)
                     Spacer(Modifier.height(8.dp))
@@ -208,5 +244,9 @@ class AlarmActivity : ComponentActivity() {
                 LimeButton("Close", onClick = { close(stepId) })
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "QuestAlarm"
     }
 }

@@ -467,8 +467,8 @@ log unpushed, so a new server receives it.
 The server page's QR code / `dwquest://pair` link only pre-fills the form in
 Settings. The user sees the server address and taps Pair. The launcher
 activity is exported and any app or web page can fire the link, so pairing
-silently would hand the quest log to whoever made it. Links and typed addresses must be `https://`. Android blocks cleartext traffic
-anyway, and the server is meant to sit behind HTTPS.
+silently would hand the quest log to whoever made it. Links and typed addresses must be `https://` in release builds
+(debug builds also accept `http://` for LAN testing, D-1106); the server is meant to sit behind HTTPS.
 
 ### D-604 · Imported events from other devices are uploaded
 A phone that imported a lost phone's snapshot pushes those events too. The
@@ -486,3 +486,54 @@ PR #1 (`v1`) was merged into the default branch, so v1.1 starts from the default
 branch. The build session is bound to the branch `ccr-ef0da54c-hdyvtk`, so v1.1 is
 developed and pushed there (instead of a branch named `v1.1`) and its draft PR
 targets the default branch.
+
+### D-1102 · The push watermark closes the server-restore gap
+D-601's checks compare the server with the phone's *pull* cursor. Events the phone
+pushed after its last pull (the push that ends a round, or a push whose pull then
+failed) were invisible to them: a server restored to a backup taken in between still
+had everything up to the pull cursor, so those pushes stayed marked as pushed and
+never reached it again.
+
+The phone now also remembers the highest server cursor its pushes reached (the push
+reply's cursor) and the id of the event the server holds there (one extra one-event
+pull after a push that stored something). Each round checks it like the pull cursor:
+if the server's latest cursor is lower, or a different event sits there (restored,
+then overtaken by other devices), the phone marks its log unpushed and re-sends it.
+The pull cursor is kept, since that part of the server is intact. A false alarm only
+costs a re-upload the server deduplicates. The watermark lives in DataStore, so no
+Room schema change was needed.
+
+### D-1103 · Back on the alarm screen
+Back stops the ringing (the insistent alarm notification is cancelled) and posts the
+same step reminder on the normal Reminders channel, silent, with Done / Snooze 1h /
+Skip. The step itself is untouched: nothing is snoozed or dismissed, because Back is
+"not now, not here", not a decision about the step.
+
+### D-1104 · Failures outside the main screen
+The alarm screen, the widget's Done dialog and Settings' sync count used to let a
+storage error escape (a crash). They now go through `Calm` (`util/SafeCommit.kt`): a
+failure is logged and becomes one calm line ("That didn't go through. Your quests are
+safe — give it another try in a moment."); a refusal by the rules keeps its own
+message. The repository never updates memory when the write failed, so nothing is
+half-applied.
+
+### D-1105 · Open dialogs survive rotation and process death
+Each screen's "which dialog is open" state (Board's track flow, Quest detail's
+prompts, Proposals' follow-up questions, the date picker's chosen day) is saved in the
+instance state as JSON (`rememberSavedDialog`). The dialogs' own text fields were
+already `rememberSaveable`; together, a dialog comes back open with what was typed.
+
+### D-1106 · LAN testing in debug builds
+Debug builds set `usesCleartextTraffic=true` and accept `http://` server addresses
+and pairing links, so the maintainer can pair with a server on the local network.
+Release builds keep HTTPS only (D-603 still holds for them). Settings → Sync states
+which mode the build is in.
+
+### D-1107 · Stable debug signing
+CI signs debug APKs with one persistent key from the `DEBUG_KEYSTORE_B64` secret
+(plus password secrets), decoded into the runner's temp folder and deleted at the end
+of the job. Without the secret, CI uses the runner's key and prints a warning in the
+log and the job summary. CI builds number themselves (`versionCode = 100 + run
+number`) so a newer APK is always an update. The keystore can't be generated into the
+repository's secrets from the build session; `docs/RELEASING.md` has the one-time
+steps for the maintainer.

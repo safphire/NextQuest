@@ -119,3 +119,24 @@ For sync and AI, you need a server reachable over HTTPS (README, "Self-hosting")
       and Done stay reachable.
 - [ ] Dark and light themes: text is readable everywhere. Lime is only used
       on primary buttons.
+
+## 10. v1.1 — updates, alarms, rotation, LAN
+- [ ] **Signing** (with the `DEBUG_KEYSTORE_B64` secret set, docs/RELEASING.md):
+      install CI debug APK N, capture a few quests, then install CI APK N+1 from a
+      later run directly over it (no uninstall). It installs as an update and every
+      quest, XP and streak is still there. The CI job summary says "stable debug key".
+- [ ] Without the secret, the CI job summary shows the "throwaway key" warning.
+- [ ] **Alarm Back:** let an alarm step ring on the full-screen alarm, press Back.
+      The ringing stops at once; a silent reminder with Done / Snooze 1h / Skip stays
+      in the shade, and each of its actions works.
+- [ ] **Rotation:** open capture, type, rotate: the panel is open with the text.
+      Same for "What's next?", Track → "First step", and the swap dialog (all slots
+      full). Repeat with "Don't keep activities" on (developer options) and switch
+      apps instead of rotating: everything comes back.
+- [ ] **LAN pairing (debug build):** run the server on a laptop with
+      `PUBLIC_URL=http://<laptop-ip>:8080`, pair the phone with
+      `http://<laptop-ip>:8080`: it pairs and syncs. Settings → Sync says plain http
+      is allowed (debug build). A release build refuses the http:// address.
+- [ ] **Restore gap:** sync, turn on airplane mode right after a capture's upload
+      starts (or stop the server mid-sync), restore the server's data volume from a
+      backup taken before that capture, start it, sync: the capture reaches the server.

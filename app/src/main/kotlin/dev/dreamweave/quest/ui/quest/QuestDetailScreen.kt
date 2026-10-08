@@ -69,6 +69,8 @@ import dev.dreamweave.quest.ui.sheets.ConfirmDialog
 import dev.dreamweave.quest.ui.sheets.DueDatePicker
 import dev.dreamweave.quest.ui.sheets.SwapDialog
 import dev.dreamweave.quest.ui.sheets.TextPromptDialog
+import dev.dreamweave.quest.ui.sheets.rememberSavedDialog
+import kotlinx.serialization.Serializable
 import dev.dreamweave.quest.ui.theme.MonoNumber
 import dev.dreamweave.quest.ui.theme.PlexMono
 import dev.dreamweave.quest.ui.theme.Quest
@@ -76,18 +78,30 @@ import dev.dreamweave.quest.util.Format
 import androidx.compose.material.icons.rounded.SearchOff
 
 /** Every prompt this screen can show, one at a time. */
+@Serializable
 private sealed interface Prompt {
+    @Serializable
     data object Rename : Prompt
+    @Serializable
     data object Why : Prompt
+    @Serializable
     data class SetStep(val questId: String) : Prompt
+    @Serializable
     data class EditStep(val stepId: String, val text: String) : Prompt
+    @Serializable
     data class Schedule(val stepId: String, val due: Long?, val alarm: Boolean) : Prompt
+    @Serializable
     data object AddSubquest : Prompt
     /** Completing or dropping [questId] leaves [ownerId] without a step: ask for one. */
+    @Serializable
     data class LeaveNeedsStep(val questId: String, val drop: Boolean, val ownerId: String) : Prompt
+    @Serializable
     data class FocusNeedsStep(val childId: String?) : Prompt
+    @Serializable
     data object TrackNeedsStep : Prompt
+    @Serializable
     data class Swap(val firstStep: String?) : Prompt
+    @Serializable
     data object ConfirmDrop : Prompt
 }
 
@@ -95,7 +109,7 @@ private sealed interface Prompt {
 fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, actions: RootActions) {
     val c = Quest.colors
     val now by vm.now.collectAsStateWithLifecycle()
-    var prompt by remember { mutableStateOf<Prompt?>(null) }
+    var prompt by rememberSavedDialog(Prompt.serializer())
     var menu by remember { mutableStateOf(false) }
     val quest = state.quests[questId]
 

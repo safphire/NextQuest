@@ -24,6 +24,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
         android:theme="@style/Theme.Quest">
 
         <!-- WorkManager initializes on demand from QuestApp (a Configuration.Provider). -->

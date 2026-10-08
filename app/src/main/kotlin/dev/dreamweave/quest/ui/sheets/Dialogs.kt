@@ -138,7 +138,8 @@ fun DueDatePicker(
     onPicked: (Long) -> Unit,
     onClear: (() -> Unit)? = null,
 ) {
-    var pickedDate by remember { mutableStateOf<LocalDate?>(null) }
+    var pickedIso by rememberSaveable { mutableStateOf<String?>(null) }
+    val pickedDate: LocalDate? = pickedIso?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
     val start = Instant.fromEpochMilliseconds(initial ?: now).toLocalDateTime(zone)
     if (pickedDate == null) {
         // The Material date picker works in UTC midnights.
@@ -149,7 +150,7 @@ fun DueDatePicker(
             confirmButton = {
                 TextButton(onClick = {
                     dateState.selectedDateMillis?.let {
-                        pickedDate = Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.UTC).date
+                        pickedIso = Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.UTC).date.toString()
                     }
                 }) { Text("Next") }
             },
@@ -173,7 +174,7 @@ fun DueDatePicker(
             text = { TimePicker(state = timeState) },
             confirmButton = {
                 LimeButton("Set", onClick = {
-                    onPicked(Format.epochOf(pickedDate!!, timeState.hour * 60 + timeState.minute, zone))
+                    onPicked(Format.epochOf(pickedDate, timeState.hour * 60 + timeState.minute, zone))
                 })
             },
             dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

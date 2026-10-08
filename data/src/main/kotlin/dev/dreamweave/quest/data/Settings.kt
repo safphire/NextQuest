@@ -39,6 +39,14 @@ data class AppSettings(
     val syncCursor: Long = 0,
     /** Id of the event at [syncCursor] on the server: a different one there means the server was reset or restored. */
     val syncCursorEventId: String? = null,
+    /**
+     * The highest server cursor this phone's pushes reached, and the id of the event the
+     * server holds there. A server restored to a backup taken between our last pull and
+     * those pushes no longer has them: its latest cursor is lower, or a different event sits
+     * at this cursor. The phone then re-sends its log (D-1102).
+     */
+    val syncPushedThrough: Long = 0,
+    val syncPushedThroughEventId: String? = null,
     val lastSyncAt: Long? = null,
     val lastSyncError: String? = null,
 )
@@ -67,6 +75,8 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val serverUrl = stringPreferencesKey("server_url")
         val syncCursor = longPreferencesKey("sync_cursor")
         val syncCursorEventId = stringPreferencesKey("sync_cursor_event_id")
+        val syncPushedThrough = longPreferencesKey("sync_pushed_through")
+        val syncPushedThroughEventId = stringPreferencesKey("sync_pushed_through_event_id")
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncError = stringPreferencesKey("last_sync_error")
     }
@@ -92,6 +102,8 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             if (n.serverUrl != null) p[K.serverUrl] = n.serverUrl else p.remove(K.serverUrl)
             p[K.syncCursor] = n.syncCursor
             if (n.syncCursorEventId != null) p[K.syncCursorEventId] = n.syncCursorEventId else p.remove(K.syncCursorEventId)
+            p[K.syncPushedThrough] = n.syncPushedThrough
+            if (n.syncPushedThroughEventId != null) p[K.syncPushedThroughEventId] = n.syncPushedThroughEventId else p.remove(K.syncPushedThroughEventId)
             if (n.lastSyncAt != null) p[K.lastSyncAt] = n.lastSyncAt else p.remove(K.lastSyncAt)
             if (n.lastSyncError != null) p[K.lastSyncError] = n.lastSyncError else p.remove(K.lastSyncError)
         }
@@ -111,6 +123,8 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         serverUrl = p[K.serverUrl],
         syncCursor = p[K.syncCursor] ?: 0,
         syncCursorEventId = p[K.syncCursorEventId],
+        syncPushedThrough = p[K.syncPushedThrough] ?: 0,
+        syncPushedThroughEventId = p[K.syncPushedThroughEventId],
         lastSyncAt = p[K.lastSyncAt],
         lastSyncError = p[K.lastSyncError],
     )

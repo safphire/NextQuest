@@ -10,12 +10,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import dev.dreamweave.quest.QuestApp
-import dev.dreamweave.quest.data.CommitResult
 import dev.dreamweave.quest.data.ThemeMode
 import dev.dreamweave.quest.presence.ReminderPlan
-import dev.dreamweave.quest.ui.QuestViewModel
 import dev.dreamweave.quest.ui.sheets.WhatsNextSheet
 import dev.dreamweave.quest.ui.theme.QuestTheme
+import dev.dreamweave.quest.util.ActionOutcome
+import dev.dreamweave.quest.util.Calm
 import kotlinx.coroutines.launch
 
 /**
@@ -32,7 +32,12 @@ class WidgetDoneActivity : ComponentActivity() {
         val c = (application as QuestApp).container
         setContent {
             QuestTheme(ThemeMode.SYSTEM) {
-                LaunchedEffect(Unit) { c.repository.load() }
+                LaunchedEffect(Unit) {
+                    if (Calm.attempt(TAG, "loading the log") { c.repository.load() } == null) {
+                        Toast.makeText(this@WidgetDoneActivity, Calm.MESSAGE, Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                }
                 val state by c.repository.state.collectAsState()
                 val s = state ?: return@QuestTheme
                 if (!committing && !ReminderPlan.isOpenStep(s, stepId)) {
@@ -52,14 +57,13 @@ class WidgetDoneActivity : ComponentActivity() {
                         if (!committing) {
                             committing = true
                             lifecycleScope.launch {
-                                when (val r = c.actions.completeStepFromWidget(stepId, next, finishOwner)) {
-                                    is CommitResult.Ok -> {
-                                        val xp = r.change.after.xp - r.change.before.xp
-                                        Toast.makeText(this@WidgetDoneActivity, "+$xp XP", Toast.LENGTH_SHORT).show()
-                                    }
-                                    is CommitResult.Rejected ->
-                                        Toast.makeText(this@WidgetDoneActivity, QuestViewModel.humanize(r.reason), Toast.LENGTH_LONG).show()
+                                val r = Calm.commit(TAG, "widget Done") { c.actions.completeStepFromWidget(stepId, next, finishOwner) }
+                                val text = when (r) {
+                                    is ActionOutcome.Done -> "+${r.change.after.xp - r.change.before.xp} XP"
+                                    is ActionOutcome.Refused -> r.message
+                                    is ActionOutcome.Failed -> r.message
                                 }
+                                Toast.makeText(this@WidgetDoneActivity, text, if (r is ActionOutcome.Done) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
                                 finish()
                             }
                         }
@@ -71,5 +75,6 @@ class WidgetDoneActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_STEP_ID = "dev.dreamweave.quest.extra.WIDGET_STEP_ID"
+        private const val TAG = "QuestWidget"
     }
 }

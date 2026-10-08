@@ -246,7 +246,7 @@ class SyncIntegrationTest {
         assertTrue(revoked.unpaired)
         assertTrue(!phone.engine.isPaired)
         assertNull(phone.settings.current().serverUrl)
-        assertTrue(phone.settings.current().lastSyncError!!.contains("Pair it again"))
+        assertTrue(phone.settings.current().lastSyncError!!.contains("Pair it in Settings"))
         assertIs<SyncOutcome.NotPaired>(phone.engine.sync())
     }
 
@@ -309,6 +309,78 @@ class SyncIntegrationTest {
         assertEquals(0, phone.repo.unpushedCount())
         assertTrue(phone.repo.current().quests.values.any { it.title == "Tablet idea 0" })
         assertEquals(server.log.size.toLong(), phone.settings.current().syncCursor)
+    }
+
+    /**
+     * The gap between the last pull and later pushes: pushes that the pull never passed
+     * (here the pull fails after the push) are lost when the server is restored to a backup
+     * taken in between. The pull cursor still matches, so only the push watermark notices.
+     */
+    @Test
+    fun serverRestoredBetweenLastPullAndLaterPushes_getsThosePushesAgain() = runBlocking {
+        val server = MemoryServer()
+        var pullFails = false
+        // Only the page pull fails; the one-event probes (limit 1) still get through.
+        val memory: SyncTransport = server
+        val transport = object : SyncTransport by memory {
+            override suspend fun pull(server: String, token: String, after: Long, limit: Int): PullResponse =
+                if (pullFails && limit > 1) throw IOException("connection dropped") else memory.pull(server, token, after, limit)
+        }
+        val phone = Phone(transport)
+        assertNull(phone.engine.pair("https://quests.example.com", "CODE", "Pixel"))
+        phone.actions.capture("Pulled and safe")
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        val backup = server.log.size
+        assertEquals(backup.toLong(), phone.settings.current().syncCursor)
+
+        // Pushed, then the connection drops before the pull: the pull cursor stays behind.
+        phone.actions.capture("Pushed after the last pull")
+        pullFails = true
+        assertIs<SyncOutcome.Failed>(phone.engine.sync())
+        pullFails = false
+        assertEquals(0, phone.repo.unpushedCount())
+        val late = phone.repo.current().quests.values.single { it.title == "Pushed after the last pull" }
+        assertTrue(server.log.any { it.id == late.id || it.payload.toString().contains(late.id) })
+
+        // The server is restored to the backup taken after the pull and before that push.
+        server.restoreBackup(keep = backup)
+        assertTrue(server.log.none { it.payload.toString().contains(late.id) })
+
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        assertTrue(server.log.any { it.payload.toString().contains(late.id) }, "the lost push was sent again")
+        assertEquals(0, phone.repo.unpushedCount())
+    }
+
+    @Test
+    fun serverRestoredBetweenPullAndPushes_andOvertaken_isNoticedToo() = runBlocking {
+        val server = MemoryServer()
+        var pullFails = false
+        // Only the page pull fails; the one-event probes (limit 1) still get through.
+        val memory: SyncTransport = server
+        val transport = object : SyncTransport by memory {
+            override suspend fun pull(server: String, token: String, after: Long, limit: Int): PullResponse =
+                if (pullFails && limit > 1) throw IOException("connection dropped") else memory.pull(server, token, after, limit)
+        }
+        val phone = Phone(transport)
+        assertNull(phone.engine.pair("https://quests.example.com", "CODE", "Pixel"))
+        phone.actions.capture("Pulled and safe")
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        val backup = server.log.size
+        phone.actions.capture("Pushed after the last pull")
+        pullFails = true
+        phone.engine.sync()
+        pullFails = false
+        val late = phone.repo.current().quests.values.single { it.title == "Pushed after the last pull" }
+
+        // Restored, and another device pushes past the phone's watermark before it syncs.
+        server.restoreBackup(keep = backup)
+        val tablet = Phone(server)
+        assertNull(tablet.engine.pair("https://quests.example.com", "CODE", "Tablet"))
+        repeat(4) { tablet.actions.capture("Tablet idea $it") }
+        assertIs<SyncOutcome.Ok>(tablet.engine.sync())
+
+        assertIs<SyncOutcome.Ok>(phone.engine.sync())
+        assertTrue(server.log.any { it.payload.toString().contains(late.id) }, "the lost push was sent again")
     }
 
     @Test

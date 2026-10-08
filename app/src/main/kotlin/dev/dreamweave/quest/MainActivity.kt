@@ -17,6 +17,7 @@ import dev.dreamweave.quest.sync.SyncWorker
 import dev.dreamweave.quest.ui.AppRoot
 import dev.dreamweave.quest.ui.ExternalRequest
 import dev.dreamweave.quest.ui.QuestViewModel
+import dev.dreamweave.quest.ui.settings.SyncStatus
 import dev.dreamweave.quest.ui.theme.QuestTheme
 
 class MainActivity : ComponentActivity() {
@@ -72,7 +73,7 @@ class MainActivity : ComponentActivity() {
                     val server = intent.data?.getQueryParameter("server")
                     val code = intent.data?.getQueryParameter("code")
                     // Only pre-fills the pairing form; the user confirms the server (SyncSection).
-                    if (server != null && code != null && server.startsWith("https://")) ExternalRequest.Pair(server.take(300), code.take(20)) else null
+                    if (server != null && code != null && SyncStatus.addressAllowed(server)) ExternalRequest.Pair(server.take(300), code.take(20)) else null
                 }
                 else -> null
             }
