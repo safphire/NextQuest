@@ -1,0 +1,53 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mcp-stats",
+    "type": "object",
+    "properties": {
+        "level": {
+            "type": "integer"
+        },
+        "xp": {
+            "type": "integer"
+        },
+        "xp_to_next_level": {
+            "type": "integer"
+        },
+        "steps_done": {
+            "type": "integer"
+        },
+        "quests_done": {
+            "type": "integer"
+        },
+        "subquests_done": {
+            "type": "integer"
+        },
+        "current_streak": {
+            "type": "integer"
+        },
+        "best_streak": {
+            "type": "integer"
+        },
+        "active_days": {
+            "type": "integer"
+        },
+        "achievements": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "required": [
+        "level",
+        "xp",
+        "xp_to_next_level",
+        "steps_done",
+        "quests_done",
+        "subquests_done",
+        "current_streak",
+        "best_streak",
+        "active_days",
+        "achievements"
+    ],
+    "additionalProperties": false
+}

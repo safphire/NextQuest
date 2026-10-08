@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- Auto Backup rules for API < 31 (mirrors data_extraction_rules.xml). -->
 <full-backup-content>
     <include domain="database" path="." />
     <include domain="file" path="datastore/" />
     <include domain="sharedpref" path="." />
-    <exclude domain="sharedpref" path="ai_secrets.xml" />
+    <!-- The sync device token is a credential bound to this install: re-pair instead. -->
+    <exclude domain="sharedpref" path="sync_secrets.xml" />
 </full-backup-content>

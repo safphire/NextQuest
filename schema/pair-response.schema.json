@@ -1,0 +1,22 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "pair-response",
+    "type": "object",
+    "properties": {
+        "token": {
+            "type": "string"
+        },
+        "serverName": {
+            "type": "string"
+        },
+        "userId": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "token",
+        "serverName",
+        "userId"
+    ],
+    "additionalProperties": false
+}

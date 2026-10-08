@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+package dev.dreamweave.quest.presence
+
+import android.content.Context
+import dev.dreamweave.quest.data.QuestRepository
+import dev.dreamweave.quest.data.SettingsStore
+import dev.dreamweave.quest.vault.VaultWorker
+import dev.dreamweave.quest.widget.QuestWidget
+import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
+
+/** Keeps alarms and the home-screen widget in step with the event log and settings. */
+class Presence(
+    private val context: Context,
+    private val repository: QuestRepository,
+    private val settings: SettingsStore,
+    val scheduler: ReminderScheduler,
+) {
+    private val mutex = Mutex()
+
+    @OptIn(FlowPreview::class)
+    fun start(scope: CoroutineScope) {
+        merge(repository.changes.map { }, settings.settings.drop(1).map { })
+            .debounce(300)
+            .onEach { changed() }
+            .launchIn(scope)
+    }
+
+    suspend fun refresh() {
+        mutex.withLock {
+            val state = repository.current()
+            val now = System.currentTimeMillis()
+            scheduler.reschedule(state, settings.current(), now = now, zone = repository.zone)
+            // Take down reminders whose step changed elsewhere (done, replaced, snoozed, skipped).
+            // Judged against the latest state, not this refresh's snapshot: a reminder posted while
+            // this refresh ran (its step scheduled after the snapshot) must not be taken down.
+            runCatching {
+                Notifications.cancelStaleSteps(context) { stepId ->
+                    ReminderPlan.stillDue(repository.state.value ?: state, stepId, System.currentTimeMillis())
+                }
+            }
+            // Best effort and bounded: a widget host that never answers must not stall alarms.
+            runCatching { withTimeout(10_000) { QuestWidget().updateAll(context) } }
+        }
+    }
+
+    /** After a change: keep the vault mirror fresh (debounced in WorkManager). */
+    suspend fun changed() {
+        refresh()
+        if (settings.current().vaultUri != null) VaultWorker.mirrorSoon(context)
+    }
+}

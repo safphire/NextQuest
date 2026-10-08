@@ -1,0 +1,31 @@
+{
+    "title": "propose_set_next_step",
+    "type": "object",
+    "properties": {
+        "quest_id": {
+            "type": "string",
+            "description": "Quest or subquest id."
+        },
+        "text": {
+            "type": "string",
+            "description": "One concrete, small action."
+        },
+        "due_at": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional ISO-8601 date-time, e.g. 2026-10-02T09:00 (server time zone) or with an offset."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "quest_id",
+        "text",
+        "reason"
+    ],
+    "additionalProperties": false
+}

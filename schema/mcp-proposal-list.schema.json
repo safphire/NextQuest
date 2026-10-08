@@ -1,0 +1,68 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mcp-proposal-list",
+    "type": "object",
+    "properties": {
+        "proposals": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "op": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "source": {
+                        "type": "string"
+                    },
+                    "client": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "quest": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "before": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "after": {
+                        "type": "string"
+                    },
+                    "reason": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                },
+                "required": [
+                    "id",
+                    "op",
+                    "status",
+                    "source",
+                    "client",
+                    "created_at",
+                    "after"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "proposals"
+    ],
+    "additionalProperties": false
+}

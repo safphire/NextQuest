@@ -1,0 +1,40 @@
+{
+    "title": "propose_schedule_step",
+    "type": "object",
+    "properties": {
+        "quest_id": {
+            "type": "string",
+            "description": "Quest or subquest id."
+        },
+        "step_id": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional; defaults to the quest's current step."
+        },
+        "due_at": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "ISO-8601 date-time (server time zone unless an offset is given), or null to remove the date."
+        },
+        "alarm": {
+            "type": [
+                "boolean",
+                "null"
+            ],
+            "description": "Ring an alarm at that time."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "quest_id",
+        "reason"
+    ],
+    "additionalProperties": false
+}

@@ -1,0 +1,22 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "pair-request",
+    "type": "object",
+    "properties": {
+        "code": {
+            "type": "string"
+        },
+        "deviceId": {
+            "type": "string"
+        },
+        "deviceName": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "code",
+        "deviceId",
+        "deviceName"
+    ],
+    "additionalProperties": false
+}

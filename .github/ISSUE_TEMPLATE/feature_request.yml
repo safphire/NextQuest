@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Feature request
+description: Suggest an idea.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Product principles
+      description: See the README. Features that break a principle will not be merged.
+      options:
+        - label: This keeps "one thing visible", the slot cap, and "AI proposes, the user ratifies" intact.
+          required: true

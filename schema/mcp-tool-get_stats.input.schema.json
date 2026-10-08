@@ -1,0 +1,6 @@
+{
+    "title": "get_stats",
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+}

@@ -1,0 +1,19 @@
+{
+    "title": "propose_park_quest",
+    "type": "object",
+    "properties": {
+        "quest_id": {
+            "type": "string",
+            "description": "Top-level quest id."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "quest_id",
+        "reason"
+    ],
+    "additionalProperties": false
+}

@@ -1,0 +1,11 @@
+{
+    "title": "get_history",
+    "type": "object",
+    "properties": {
+        "days": {
+            "type": "integer",
+            "description": "How many days back (1–90, default 7)."
+        }
+    },
+    "additionalProperties": false
+}

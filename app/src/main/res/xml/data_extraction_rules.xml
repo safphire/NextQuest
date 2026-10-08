@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!--
-    Android Auto Backup (SPEC.md §9.4): DB + DataStore restore on reinstall or
-    a new device. The AI key prefs (M4, Keystore-encrypted, device-bound) are
-    excluded up front — they'd restore as garbage.
+    Android Auto Backup: the event log (database) and settings restore on
+    reinstall or a new device. The sync device token is excluded — it is a
+    credential bound to this install; the user re-pairs instead.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <include domain="database" path="." />
         <include domain="file" path="datastore/" />
         <include domain="sharedpref" path="." />
-        <exclude domain="sharedpref" path="ai_secrets.xml" />
+        <exclude domain="sharedpref" path="sync_secrets.xml" />
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="." />
         <include domain="file" path="datastore/" />
         <include domain="sharedpref" path="." />
-        <exclude domain="sharedpref" path="ai_secrets.xml" />
+        <exclude domain="sharedpref" path="sync_secrets.xml" />
     </device-transfer>
 </data-extraction-rules>

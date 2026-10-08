@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <resources>
-    <string name="app_name">NextQuest</string>
+    <!-- The ONLY place the product name lives in the app (rename-ready, see docs/DECISIONS.md).
+         Everything else references @string/app_name or stringResource(R.string.app_name). -->
+    <string name="app_name" translatable="false">NextQuest</string>
+    <string name="share_capture_label">Capture as quest</string>
+    <string name="widget_label">Next steps</string>
+    <string name="widget_description">Your tracked quests\' next steps, with Done and capture.</string>
 </resources>

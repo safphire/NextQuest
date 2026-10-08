@@ -1,0 +1,65 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "snapshot",
+    "type": "object",
+    "properties": {
+        "format": {
+            "type": "string"
+        },
+        "schemaVersion": {
+            "type": "integer"
+        },
+        "exportedAt": {
+            "type": "integer"
+        },
+        "deviceId": {
+            "type": "string"
+        },
+        "events": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "deviceId": {
+                        "type": "string"
+                    },
+                    "seq": {
+                        "type": "integer"
+                    },
+                    "ts": {
+                        "type": "integer"
+                    },
+                    "actor": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "required": [
+                    "id",
+                    "deviceId",
+                    "seq",
+                    "ts",
+                    "actor",
+                    "type",
+                    "payload"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "exportedAt",
+        "deviceId",
+        "events"
+    ],
+    "additionalProperties": false
+}

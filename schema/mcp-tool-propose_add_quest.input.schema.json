@@ -1,0 +1,44 @@
+{
+    "title": "propose_add_quest",
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+            "description": "Short quest title."
+        },
+        "why": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional: why it matters to the user."
+        },
+        "next_step": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "The very next physical action. Required when track is true."
+        },
+        "due_at": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional ISO-8601 date-time, e.g. 2026-10-02T09:00 (server time zone) or with an offset."
+        },
+        "track": {
+            "type": "boolean",
+            "description": "Suggest tracking it now (needs a free slot or a pending park proposal)."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "title",
+        "reason"
+    ],
+    "additionalProperties": false
+}

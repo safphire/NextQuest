@@ -1,0 +1,192 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mcp-today",
+    "type": "object",
+    "properties": {
+        "date": {
+            "type": "string"
+        },
+        "slots_used": {
+            "type": "integer"
+        },
+        "slot_cap": {
+            "type": "integer"
+        },
+        "tracked": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "why": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "parent_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "next_step": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "text": {
+                                "type": "string"
+                            },
+                            "due_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ]
+                            },
+                            "alarm": {
+                                "type": "boolean"
+                            },
+                            "done": {
+                                "type": "boolean"
+                            },
+                            "quest_id": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "id",
+                            "text",
+                            "quest_id"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "needs_next_step": {
+                        "type": "boolean"
+                    },
+                    "subquests_done": {
+                        "type": "integer"
+                    },
+                    "subquests_total": {
+                        "type": "integer"
+                    },
+                    "subquests": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "title": {
+                                    "type": "string"
+                                },
+                                "status": {
+                                    "type": "string"
+                                },
+                                "focused": {
+                                    "type": "boolean"
+                                },
+                                "next_step": {
+                                    "type": [
+                                        "object",
+                                        "null"
+                                    ],
+                                    "properties": {
+                                        "id": {
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        },
+                                        "due_at": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
+                                        },
+                                        "alarm": {
+                                            "type": "boolean"
+                                        },
+                                        "done": {
+                                            "type": "boolean"
+                                        },
+                                        "quest_id": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "id",
+                                        "text",
+                                        "quest_id"
+                                    ],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "required": [
+                                "id",
+                                "title",
+                                "status",
+                                "focused"
+                            ],
+                            "additionalProperties": false
+                        }
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "touched_at": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "id",
+                    "title",
+                    "status",
+                    "created_at",
+                    "touched_at"
+                ],
+                "additionalProperties": false
+            }
+        },
+        "streak_days": {
+            "type": "integer"
+        },
+        "level": {
+            "type": "integer"
+        },
+        "xp": {
+            "type": "integer"
+        },
+        "pending_proposals": {
+            "type": "integer"
+        },
+        "note": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "date",
+        "slots_used",
+        "slot_cap",
+        "tracked",
+        "streak_days",
+        "level",
+        "xp",
+        "pending_proposals",
+        "note"
+    ],
+    "additionalProperties": false
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<resources>
+    <color name="background">#0F1513</color>
+    <color name="surface">#18201D</color>
+    <color name="text">#EAF2EC</color>
+    <color name="violet">#8C80FF</color>
+</resources>

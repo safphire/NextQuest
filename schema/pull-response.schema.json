@@ -1,0 +1,72 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "pull-response",
+    "type": "object",
+    "properties": {
+        "events": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "cursor": {
+                        "type": "integer"
+                    },
+                    "event": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "deviceId": {
+                                "type": "string"
+                            },
+                            "seq": {
+                                "type": "integer"
+                            },
+                            "ts": {
+                                "type": "integer"
+                            },
+                            "actor": {
+                                "type": "string"
+                            },
+                            "type": {
+                                "type": "string"
+                            },
+                            "payload": {
+                                "type": "object",
+                                "additionalProperties": {}
+                            }
+                        },
+                        "required": [
+                            "id",
+                            "deviceId",
+                            "seq",
+                            "ts",
+                            "actor",
+                            "type",
+                            "payload"
+                        ],
+                        "additionalProperties": false
+                    }
+                },
+                "required": [
+                    "cursor",
+                    "event"
+                ],
+                "additionalProperties": false
+            }
+        },
+        "cursor": {
+            "type": "integer"
+        },
+        "hasMore": {
+            "type": "boolean"
+        }
+    },
+    "required": [
+        "events",
+        "cursor",
+        "hasMore"
+    ],
+    "additionalProperties": false
+}

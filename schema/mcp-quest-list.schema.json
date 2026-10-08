@@ -1,0 +1,160 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mcp-quest-list",
+    "type": "object",
+    "properties": {
+        "quests": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "why": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "parent_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "next_step": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "text": {
+                                "type": "string"
+                            },
+                            "due_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ]
+                            },
+                            "alarm": {
+                                "type": "boolean"
+                            },
+                            "done": {
+                                "type": "boolean"
+                            },
+                            "quest_id": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "id",
+                            "text",
+                            "quest_id"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "needs_next_step": {
+                        "type": "boolean"
+                    },
+                    "subquests_done": {
+                        "type": "integer"
+                    },
+                    "subquests_total": {
+                        "type": "integer"
+                    },
+                    "subquests": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "title": {
+                                    "type": "string"
+                                },
+                                "status": {
+                                    "type": "string"
+                                },
+                                "focused": {
+                                    "type": "boolean"
+                                },
+                                "next_step": {
+                                    "type": [
+                                        "object",
+                                        "null"
+                                    ],
+                                    "properties": {
+                                        "id": {
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        },
+                                        "due_at": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
+                                        },
+                                        "alarm": {
+                                            "type": "boolean"
+                                        },
+                                        "done": {
+                                            "type": "boolean"
+                                        },
+                                        "quest_id": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "id",
+                                        "text",
+                                        "quest_id"
+                                    ],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "required": [
+                                "id",
+                                "title",
+                                "status",
+                                "focused"
+                            ],
+                            "additionalProperties": false
+                        }
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "touched_at": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "id",
+                    "title",
+                    "status",
+                    "created_at",
+                    "touched_at"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "quests"
+    ],
+    "additionalProperties": false
+}

@@ -1,0 +1,14 @@
+{
+    "title": "list_proposals",
+    "type": "object",
+    "properties": {
+        "status": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "pending (default), accepted, rejected or edited."
+        }
+    },
+    "additionalProperties": false
+}

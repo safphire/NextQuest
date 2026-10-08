@@ -1,58 +1,66 @@
-# CLAUDE.md — NextQuest engineering rules
+# CLAUDE.md — engineering rules
 
-NextQuest is a native Android personal quest log. `SPEC.md` is the product
-contract — read it before changing behavior. These are the standing
-engineering rules distilled from it.
+Local-first Android quest log + optional self-hostable sync/MCP server.
+`docs/SPEC.md` is the product contract (the v1 brief); `docs/DECISIONS.md`
+records every judgment call made against it. Read both before changing behavior.
 
-## Stack
+## Principles (they decide every judgment call)
 
-- Kotlin 2.x + Jetpack Compose (Material 3, dark-only custom theme).
-- Room (DB) · DataStore (settings) · WorkManager + AlarmManager (notifications)
-  · SAF/DocumentFile (vault writes) · kotlinx-serialization.
-- minSdk 26, targetSdk current. No backend, no accounts, single user,
-  local-first.
+1. One thing visible — each tracked quest shows only its single next step.
+2. Capture in two seconds from anywhere; capture never forces sorting.
+3. Hard cap of tracked quests (3–7, default 5) — never exceedable by any path.
+4. Every tracked quest has a next step; only a notification/widget Done may
+   leave it flagged "needs next step".
+5. AI proposes, the user ratifies — nothing from the server/MCP mutates quest
+   state without a user acceptance event.
+6. Re-entry without guilt — no overdue walls of red.
+7. Local-first — fully functional offline, no account.
 
-## Architecture: the pure `core` package
+## Modules
 
-- All domain logic — XP/level curve, streak computation, next-step invariant,
-  tracked-cap rule, versioned JSON snapshot codec — lives in the `:core`
-  Gradle module (`com.nextquest.core`), which is **pure Kotlin/JVM with zero
-  Android imports**. No `android.*`, no `androidx.*`, ever.
-- `core` is covered by plain JVM unit tests (`:core:test`). New domain rules
-  land there with tests before any UI wires them up.
-- The `:app` module holds Room, Compose, and platform glue; it adapts to
-  `core` types, never duplicates their logic.
-- The versioned JSON snapshot and the vault markdown format are **public
-  contracts** — never change them without bumping `schemaVersion` and keeping
-  old versions readable.
+| Module | What | Rules |
+|---|---|---|
+| `:core` | Events, fold (events → state), game rules, invariants, proposal validation | Pure Kotlin. **No `android.*`/`androidx.*` ever.** ≥90% line coverage (`koverVerify`). |
+| `:protocol` | Wire DTOs (sync, MCP tool I/O), JSON Schema emission to `/schema` | Backward compatible; regenerate `/schema` after changes. |
+| `:data` | Room event store, repositories, DataStore settings, sync client | Room discipline below. |
+| `:app` | Compose UI, notifications, alarms, widget, vault export | Adapts `:core` types; never duplicates domain logic. |
+| `:server` | Ktor sync API + MCP endpoint + OAuth, SQLite | Every table carries `user_id`. |
+
+## Event sourcing
+
+- The append-only event log is the only source of truth. XP, level, streak,
+  achievements, history and Chronicle are derived by the fold in `:core`.
+- Local writes go through `Commit` validation in `:core` (all-or-nothing);
+  merged/imported/synced events go through the deterministic fold, which
+  skips (and records) any event that would break an invariant.
+- Canonical order: `(ts, deviceId, seq)`. See `docs/SYNC.md`.
+- All IDs are UUIDv7 strings (`Ids.newId()`).
 
 ## Room discipline (data durability is non-negotiable)
 
-- `exportSchema = true`; generated `app/schemas/*.json` are **committed**.
-- Additive changes use auto-migrations; renames/splits get a hand-written
-  `Migration(n, n+1)`.
-- **One `MigrationTestHelper` test per schema version** — every historical
-  schema must open green before release.
-- `fallbackToDestructiveMigration()` (and any destructive-migration variant)
-  is **banned**. It silently wipes user data.
-- `EventLog` is the source of truth for stats; XP/level/streak/achievements
-  are derived, never stored as primary state.
+- `exportSchema = true`; `data/schemas/*.json` are **committed**.
+- Every schema change ships with a `Migration(n, n+1)` (or auto-migration),
+  the exported schema JSON, and a migration test (Robolectric in `:data:test`,
+  plus instrumented in `:data:androidTest`).
+- `fallbackToDestructiveMigration()` and its variants are **banned**.
+
+## Naming
+
+- The product name lives in exactly two places: `app_name` in
+  `app/src/main/res/values/strings.xml` and the server's `APP_NAME` setting.
+  Never hard-code it anywhere else. Package id: `dev.dreamweave.quest`.
 
 ## Workflow
 
-- **Conventional commits**: `feat:`, `fix:`, `docs:`, `ci:`, `build:`,
-  `test:`, `refactor:`, `chore:` (scope optional, e.g. `feat(core): …`).
-- **One milestone per PR** (M0 Loop, M1 Depth, M2 Vault, M3 Notifications,
-  M4 AI — see SPEC.md §8). Don't mix milestones in a branch.
-- CI must stay green: unit tests + `assembleDebug` run on every push; the
-  debug APK is the build artifact.
-- Never commit keystores, API keys, or secrets — they are gitignored; keep it
-  that way.
+- Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `build:`, `ci:`,
+  `refactor:`, `chore:`; scope optional).
+- SPDX header `// SPDX-License-Identifier: AGPL-3.0-or-later` on every source file.
+- CI must stay green. Never commit keystores, tokens or passwords.
 
 ## Build
 
-- Gradle wrapper is pinned (`gradle/wrapper/gradle-wrapper.properties`);
-  Android SDK versions are pinned in the build and mirrored in CI. Bump them
-  deliberately in a dedicated `build:` commit, not as a side effect.
-- `./gradlew :core:test` — fast JVM domain tests (no Android SDK needed).
-- `./gradlew test :app:assembleDebug` — full check, same as CI.
+- `./gradlew test` — everything (needs Android SDK + Google Maven).
+- `./gradlew -Pquest.jvmOnly=true test` — `:core`, `:protocol`, `:server` only.
+- `./gradlew :core:koverVerify` — coverage gate.
+- `./gradlew :protocol:generateSchemas` — refresh `/schema`.
+- `./gradlew :app:assembleDebug` — debug APK. `./gradlew :server:run` — server.

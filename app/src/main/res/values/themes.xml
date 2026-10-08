@@ -1,11 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <resources>
-    <!-- Dark-only. Compose owns the real theme; this covers the pre-Compose window. -->
-    <style name="Theme.NextQuest" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/ink</item>
-        <item name="android:statusBarColor">@color/ink</item>
-        <item name="android:navigationBarColor">@color/ink</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:colorAccent">@color/gold</item>
+    <!-- Compose owns the real theme; this only covers the pre-Compose window. -->
+    <style name="Theme.Quest" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">@color/violet</item>
+    </style>
+
+    <!-- Over the home screen: the widget's "What's next?" sheet. -->
+    <style name="Theme.Quest.Translucent" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

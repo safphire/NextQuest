@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# One-command self-host:   cp .env.example .env   (set ADMIN_PASSWORD, PUBLIC_URL)
+#                          docker compose up -d
+# Put it behind HTTPS (Caddy, Traefik, a tunnel…) before connecting Claude or ChatGPT.
+# Inside the container the server always listens on 0.0.0.0:8080. BIND_ADDRESS and PORT
+# only choose where compose publishes it on the host: 127.0.0.1 (default) for a reverse
+# proxy on the same host, 0.0.0.0 to reach it from the LAN directly.
+# TRUST_PROXY=1 (default) takes client IPs for rate limits from X-Forwarded-For, but only
+# when the request comes from loopback or a private/Docker network, i.e. that proxy. Set
+# TRUST_PROXY=0 if clients connect to the published port directly.
+services:
+  quest:
+    build: .
+    image: dreamweave-quest-server:local
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD (12+ characters) in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-8080}}
+      APP_NAME: ${APP_NAME:-}
+      TZ: ${TZ:-UTC}
+      MCP_CALLS_PER_MINUTE: ${MCP_CALLS_PER_MINUTE:-60}
+      PROPOSALS_PER_HOUR: ${PROPOSALS_PER_HOUR:-30}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    volumes:
+      - quest-data:/data
+
+volumes:
+  quest-data:
