@@ -11,7 +11,10 @@ import dev.dreamweave.quest.core.ProposalRules
 import dev.dreamweave.quest.core.ProposalStatus
 import dev.dreamweave.quest.core.QuestCreated
 import dev.dreamweave.quest.core.QuestStatus
+import dev.dreamweave.quest.core.QuestEdited
 import dev.dreamweave.quest.core.QuestStatusSet
+import dev.dreamweave.quest.core.Rhythm
+import dev.dreamweave.quest.core.RhythmKind
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -31,6 +34,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -164,7 +169,7 @@ class McpOAuthTest {
         assertEquals(HttpStatusCode.BadRequest, mcpRaw(token, "{not json").status)
 
         val tools = rpc(token, "tools/list")["result"]!!.jsonObject["tools"]!!.jsonArray
-        assertEquals(12, tools.size)
+        assertEquals(13, tools.size)
         val add = tools.first { it.jsonObject.str("name") == "propose_add_quest" }.jsonObject
         assertEquals(false, add["annotations"]!!.jsonObject["readOnlyHint"]!!.jsonPrimitive.content.toBoolean())
 
@@ -222,6 +227,76 @@ class McpOAuthTest {
         assertEquals(ProposalStatus.ACCEPTED, final.proposals.getValue(proposalId).status)
         assertEquals("accepted", tool(token, "list_proposals", args { put("status", "accepted") }).second.jsonObject["proposals"]!!.jsonArray[0].jsonObject.str("status"))
         assertEquals("Write chapter 1 intro", tool(token, "get_today").second.jsonObject["tracked"]!!.jsonArray[0].jsonObject["next_step"]!!.jsonObject.str("text"))
+    }
+
+    @Test
+    fun v11_practicesCuesAndObstacles_areReadable_andOnlyProposed() = serverTest {
+        val phone = pairDevice()
+        val sing = Ids.newId(clock.now)
+        val report = Ids.newId(clock.now + 1)
+        phone.push(
+            Events.questCreated(QuestCreated(sing, "Singing", rhythm = Rhythm(RhythmKind.WEEKDAYS, listOf(1, 3, 5), reminderMinute = 450))),
+            Events.questStatusSet(QuestStatusSet(sing, QuestStatus.TRACKED, NextStep(Ids.newId(clock.now), sing, "20 min scales"))),
+            Events.questCreated(QuestCreated(report, "Report")),
+            Events.questEdited(QuestEdited(report, obstacle = "Blank page", plan = "If stuck, one ugly sentence")),
+            Events.questStatusSet(QuestStatusSet(report, QuestStatus.TRACKED, NextStep(Ids.newId(clock.now), report, "Open the doc", cue = "after lunch"))),
+        )
+        val token = connect().str("access_token")
+        val q = tool(token, "get_quest", args { put("quest_id", sing) }).second.jsonObject
+        assertEquals("practice", q.str("kind"))
+        assertEquals("weekdays", q["rhythm"]!!.jsonObject.str("kind"))
+        assertEquals(listOf("mon", "wed", "fri"), q["rhythm"]!!.jsonObject["days"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("07:30", q["rhythm"]!!.jsonObject.str("reminder"))
+        assertEquals("3", q["this_week"]!!.jsonObject.str("target"))
+        assertNotNull(q["next_session_on"])
+        val r = tool(token, "get_quest", args { put("quest_id", report) }).second.jsonObject
+        assertEquals("quest", r.str("kind"))
+        assertEquals("Blank page", r.str("obstacle"))
+        assertEquals("If stuck, one ugly sentence", r.str("plan"))
+        assertEquals("after lunch", r["next_step"]!!.jsonObject.str("cue"))
+        assertTrue(tool(token, "list_quests", args { put("status", "tracked") }).second.jsonObject["quests"]!!.jsonArray.any { it.jsonObject.str("kind") == "practice" })
+
+        val before = services.store.state(services.config.userId)
+        // A new practice, a cue on a next step, a cue-only schedule: all proposals, nothing applied.
+        val (e1, p1) = tool(
+            token, "propose_add_practice",
+            args {
+                put("title", "Drawing")
+                putJsonObject("rhythm") { put("kind", "per_week"); put("times", 3); put("reminder", "18:00") }
+                put("first_step", "One gesture sketch"); put("reason", "You said you miss drawing.")
+            },
+        )
+        assertFalse(e1, p1.toString())
+        assertFalse(tool(token, "propose_set_next_step", args { put("quest_id", report); put("text", "Write the intro"); put("cue", "at my desk"); put("reason", "r") }).first)
+        val (e3, p3) = tool(token, "propose_schedule_step", args { put("quest_id", report); put("cue", "before standup"); put("reason", "r") })
+        assertFalse(e3, p3.toString())
+        val after = services.store.state(services.config.userId)
+        assertEquals(before.quests, after.quests)
+        assertEquals(before.steps, after.steps)
+        assertEquals(3, after.pendingProposals.size)
+        val cueOnly = after.proposals.getValue(p3.jsonObject.str("proposal_id"))
+        assertEquals("true", cueOnly.payload["keepDue"].toString())
+
+        // Bad rhythms are explained to the model.
+        val (bad, why) = tool(
+            token, "propose_add_practice",
+            args {
+                put("title", "X"); putJsonObject("rhythm") { put("kind", "weekdays"); putJsonArray("days") { add(JsonPrimitive("someday")) } }
+                put("first_step", "y"); put("reason", "r")
+            },
+        )
+        assertTrue(bad)
+        assertContains(why.jsonPrimitive.content, "mon, tue")
+        assertTrue(tool(token, "propose_add_practice", args { put("title", "X"); putJsonObject("rhythm") { put("kind", "weekdays") }; put("first_step", "y"); put("reason", "r") }).first)
+        assertTrue(tool(token, "propose_add_practice", args { put("title", "X"); putJsonObject("rhythm") { put("kind", "daily"); put("reminder", "25:00") }; put("first_step", "y"); put("reason", "r") }).first)
+        assertTrue(tool(token, "propose_add_subquest", args { put("parent_id", sing); put("title", "Breathing"); put("reason", "r") }).first)
+
+        // The user accepts the practice in the app: it lands in the inbox as a practice.
+        val pid = p1.jsonObject.str("proposal_id")
+        phone.push(*ProposalRules.decide(after, pid, Decision.Accept()).toTypedArray())
+        val drawing = services.store.state(services.config.userId).quests.values.single { it.title == "Drawing" }
+        assertEquals(QuestStatus.INBOX, drawing.status)
+        assertEquals(Rhythm(RhythmKind.PER_WEEK, times = 3, reminderMinute = 18 * 60), drawing.rhythm)
     }
 
     @Test

@@ -7,4 +7,172 @@
     <string name="share_capture_label">Capture as quest</string>
     <string name="widget_label">Next steps</string>
     <string name="widget_description">Your tracked quests\' next steps, with Done and capture.</string>
+
+    <!-- ================================================================================
+         v1.1 copy: the focus layer, practices, undo and focus timer, in one place for review.
+         Calm and informational, never shaming. Banned in user-facing copy (a unit test scans
+         this file and the app's string literals): overdue, failed, missed (except in the
+         forgiveness lines and the brief's own Fresh start line), lazy, behind, again.
+         ================================================================================ -->
+
+    <!-- Reset (C1) -->
+    <string name="reset_button">Reset</string>
+    <string name="reset_button_a11y">Reset: breathe, shrink a step, or start fresh</string>
+    <string name="reset_title">Reset</string>
+    <string name="reset_subtitle">A minute to settle, a smaller step, or a clean slate.</string>
+    <string name="reset_breathe">Breathe</string>
+    <string name="reset_breathe_hint">Two inhales, one long exhale. 1–5 minutes.</string>
+    <string name="reset_shrink">Shrink a step</string>
+    <string name="reset_shrink_hint">Rewrite a step as a 2-minute version.</string>
+    <string name="reset_fresh">Fresh start</string>
+    <string name="reset_fresh_hint">Clean slate. Nothing you missed carries forward.</string>
+
+    <!-- Breathe: cyclic sighing -->
+    <string name="breathe_title">Breathe</string>
+    <string name="breathe_why">Cyclic sighing (two inhales through the nose, one long exhale through the mouth) lifted mood more than mindfulness in a 28-day study. Five minutes is plenty.</string>
+    <string name="breathe_minutes">%1$d min</string>
+    <string name="breathe_start">Start</string>
+    <string name="breathe_screen_off">You can turn the screen off: gentle vibrations guide each breath.</string>
+    <string name="breathe_inhale">Breathe in</string>
+    <string name="breathe_inhale_more">A little more in</string>
+    <string name="breathe_exhale">Long, slow breath out</string>
+    <string name="breathe_count">Breath %1$d · %2$s left</string>
+    <string name="breathe_finished">That\'s it. Notice how you feel.</string>
+    <string name="breathe_stop">Stop</string>
+    <string name="breathe_close">Close</string>
+    <string name="breathe_notification">Breathing · %1$s left</string>
+    <string name="breathe_shape_a11y">Breathing guide</string>
+
+    <!-- Shrink -->
+    <string name="shrink_title">Shrink a step</string>
+    <string name="shrink_pick">Which quest?</string>
+    <string name="shrink_now">Now: %1$s</string>
+    <string name="shrink_prompt">What\'s a 2-minute version?</string>
+    <string name="shrink_placeholder">e.g. Open the file and write one line</string>
+    <string name="shrink_save">Save the smaller step</string>
+    <string name="shrink_saved">Smaller step saved. Two minutes is enough.</string>
+
+    <!-- Fresh start -->
+    <string name="fresh_title">Fresh start</string>
+    <string name="fresh_body">Clean slate. Nothing you missed carries forward.</string>
+    <string name="fresh_details">Snoozes and past dates on your tracked steps are cleared (the steps stay, undated). XP, level, achievements and your best streak are untouched.</string>
+    <string name="fresh_park_toggle">Park all but one quest</string>
+    <string name="fresh_keep">Keep only this one tracked:</string>
+    <string name="fresh_confirm">Start fresh</string>
+    <string name="fresh_done">Clean slate. Pick one step and begin.</string>
+
+    <!-- Fresh-start moments (C2) -->
+    <string name="resume_label">Welcome back</string>
+    <string name="resume_away">It\'s been %1$d days. Nothing to catch up on.</string>
+    <string name="resume_new_week">A new week starts today.</string>
+    <string name="resume_new_month">A new month starts today.</string>
+    <string name="resume_body">Pick up where you left off, or take a clean slate.</string>
+    <string name="resume_pick_up">Pick up where you left off</string>
+    <string name="resume_fresh">Fresh start</string>
+
+    <!-- Forgiveness after a day without a step (C5). "Missed" is allowed only here. -->
+    <string-array name="forgiveness_lines">
+        <item>Yesterday didn\'t happen. That\'s normal — one missed day barely affects a habit. What\'s one small step now?</item>
+        <item>A quiet day yesterday. Habits are built over months, not days. What\'s one small step now?</item>
+        <item>Yesterday slipped by. Be kind to yourself about it: that makes today easier. What\'s one small step now?</item>
+        <item>No step yesterday, and that\'s fine. One missed day barely changes anything. What\'s the smallest next step?</item>
+    </string-array>
+    <string name="forgiveness_set_step">Set step</string>
+    <string name="forgiveness_dismiss">Dismiss</string>
+
+    <!-- Stuck? (B4) -->
+    <string name="stuck_chip">Stuck?</string>
+    <string name="stuck_chip_a11y">Stuck? Options for this step</string>
+    <string name="stuck_title">Stuck on this?</string>
+    <string name="stuck_body">Steps that sit for a few days usually just need to be smaller. Pick a way in:</string>
+    <string name="stuck_shrink">Shrink it</string>
+    <string name="stuck_shrink_hint">Rewrite it as a 2-minute version</string>
+    <string name="stuck_focus">Focus 10 min</string>
+    <string name="stuck_focus_hint">Just ten minutes on it, nothing more</string>
+    <string name="stuck_park">Park it</string>
+    <string name="stuck_park_hint">Move it to Later and free the slot</string>
+    <string name="stuck_ask_ai">Ask Claude to break it down</string>
+    <string name="stuck_ask_ai_hint">Opens the share sheet with a ready prompt</string>
+
+    <!-- Ask AI (B5) -->
+    <string name="ask_ai">Ask AI to break this down</string>
+    <string name="ask_ai_chooser">Break it down with…</string>
+    <string name="ask_ai_none">No app to share with. Copy the quest into your AI app by hand.</string>
+
+    <!-- Focus timer (B3) -->
+    <string name="focus_button">Focus</string>
+    <string name="focus_button_a11y">Focus on “%1$s”</string>
+    <string name="focus_title">Focus on this step</string>
+    <string name="focus_minutes">%1$d min</string>
+    <string name="focus_start">Start</string>
+    <string name="focus_pause">Pause</string>
+    <string name="focus_resume">Resume</string>
+    <string name="focus_stop">Stop</string>
+    <string name="focus_left">%1$s left</string>
+    <string name="focus_paused">Paused · %1$s left</string>
+    <string name="focus_end_question">Did you finish the step?</string>
+    <string name="focus_end_done">Done</string>
+    <string name="focus_end_keep_going">Keep going</string>
+    <string name="focus_end_not_yet">Not yet</string>
+    <string name="focus_end_effort">+%1$d XP for the focus</string>
+    <string name="focus_end_effort_capped">Today\'s focus XP is full. The work still counts.</string>
+    <string name="focus_stopped">Stopped. The step is here when you want it.</string>
+    <string name="focus_channel">Focus timer</string>
+    <string name="focus_channel_description">The running focus timer, and a chime when a block ends.</string>
+    <string name="focus_notification_running">Focus · %1$s</string>
+    <string name="focus_notification_ended">Block done · %1$s</string>
+    <string name="focus_already_running">A focus block is already running.</string>
+
+    <!-- Undo (B2) -->
+    <string name="undo">Undo</string>
+    <string name="undo_offer">Done · %1$s</string>
+    <string name="undo_done">Undone. Everything is as it was.</string>
+    <string name="undo_refused">That can\'t be undone now: something about it changed since.</string>
+    <string name="undo_notification_title">Done · %1$s</string>
+    <string name="undo_notification_text">Tap Undo within 5 minutes if that was a slip.</string>
+
+    <!-- When/where cues (C3) and obstacle + plan (C4) -->
+    <string name="cue_title">When/where?</string>
+    <string name="cue_placeholder">e.g. after lunch, at my desk</string>
+    <string name="cue_time">A time</string>
+    <string name="cue_after">after ___</string>
+    <string name="cue_at">at ___</string>
+    <string name="cue_after_prefix">"after "</string>
+    <string name="cue_at_prefix">"at "</string>
+    <string name="cue_edit">Edit when/where</string>
+    <string name="obstacle_title">What\'s in the way?</string>
+    <string name="obstacle_placeholder">The most likely thing that stops you</string>
+    <string name="plan_title">If that happens, I will…</string>
+    <string name="plan_placeholder">One concrete thing you\'ll do instead</string>
+    <string name="obstacle_section">Obstacle and plan</string>
+
+    <!-- Practices (B1) -->
+    <string name="practice_label">Practice</string>
+    <string name="practice_this_week">This week %1$d/%2$d</string>
+    <string name="practice_next_session">Next session %1$s</string>
+    <string name="practice_done_today">Session logged for today.</string>
+    <string name="practice_session_done">Session logged · +%1$d XP</string>
+    <string name="practice_make">Make it a practice</string>
+    <string name="practice_change_rhythm">Change rhythm</string>
+    <string name="practice_unmake">Make it a regular quest</string>
+    <string name="practice_rhythm_title">How often?</string>
+    <string name="practice_daily">Daily</string>
+    <string name="practice_weekdays">Chosen days</string>
+    <string name="practice_per_week">Times a week</string>
+    <string name="practice_times">%1$d× a week</string>
+    <string name="practice_reminder">Reminder on session days</string>
+    <string name="practice_reminder_none">No reminder</string>
+    <string name="practice_never_complete">Practices never complete. Park or drop it when it has served you.</string>
+
+    <!-- Capture: a pasted list -->
+    <string name="capture_list">Save %1$d items to inbox</string>
+    <string name="capture_list_hint">Each line becomes its own inbox item.</string>
+
+    <!-- Trophies -->
+    <string name="trophies_focus_minutes">Focus min</string>
+    <string name="trophies_best_streak">Best streak: %1$d days. It\'s yours to keep.</string>
+
+    <!-- Settings -->
+    <string name="settings_stuck_days">Suggest “Stuck?” after</string>
+    <string name="settings_stuck_days_value">%1$d days</string>
 </resources>

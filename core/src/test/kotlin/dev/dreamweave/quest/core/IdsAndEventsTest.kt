@@ -101,7 +101,7 @@ class IdsAndEventsTest {
         assertEquals(StepVia.NOTIFICATION, back.via)
         assertEquals("x", back.next!!.text)
         assertNull(Events.decode(StepSet.serializer(), JsonObject(emptyMap())))
-        assertEquals(16, EventTypes.ALL.size)
+        assertEquals(20, EventTypes.ALL.size)
     }
 
     @Test

@@ -55,7 +55,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.dreamweave.quest.R
 import dev.dreamweave.quest.core.CalendarItem
+import dev.dreamweave.quest.core.PracticeDay
+import androidx.compose.ui.res.stringResource
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.core.Views
 import dev.dreamweave.quest.ui.QuestViewModel
@@ -100,6 +103,9 @@ fun CalendarScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) 
     val items = remember(state, from, to) { Views.calendar(state, from, to, zone) }
     val byDay = remember(items) { items.groupBy { it.date } }
     val dayItems = byDay[selected].orEmpty()
+    // Practices: logged sessions and the days ahead their rhythm asks for (never missed ones).
+    val practiceByDay = remember(state, from, to, today) { Views.practiceCalendar(state, from, to, today).groupBy { it.date } }
+    val dayPractices = practiceByDay[selected].orEmpty()
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -155,7 +161,7 @@ fun CalendarScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) 
                             val d = weekStart.plus(DatePeriod(days = i))
                             DayCell(
                                 date = d,
-                                count = byDay[d]?.size ?: 0,
+                                count = (byDay[d]?.size ?: 0) + (practiceByDay[d]?.size ?: 0),
                                 isToday = d == today,
                                 isSelected = d == selected,
                                 dim = month && d.month != anchor.month,
@@ -172,10 +178,13 @@ fun CalendarScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) 
             Spacer(Modifier.height(4.dp))
             MetaLabel(if (selected == today) "Today" else Format.shortDate(selected))
         }
-        if (dayItems.isEmpty()) {
+        if (dayItems.isEmpty() && dayPractices.isEmpty()) {
             item {
                 EmptyState(Icons.Rounded.EventAvailable, "Nothing scheduled", "Give a step a date from its quest to see it here.")
             }
+        }
+        items(dayPractices, key = { "practice:" + it.quest.id }) { p ->
+            PracticeRow(p, step = state.openStep(p.quest.id)?.text, onOpen = { actions.openQuest(p.quest.id) })
         }
         items(dayItems, key = { it.step.id }) { item -> CalendarRow(item, zone = vm.zone, onOpen = { actions.openQuest(item.root.id) }) }
     }
@@ -221,6 +230,7 @@ private fun CalendarRow(item: CalendarItem, zone: kotlinx.datetime.TimeZone, onO
                     item.step.text, style = MaterialTheme.typography.bodyLarge,
                     color = if (item.step.isDone) c.textSecondary else c.text,
                 )
+                item.step.cue?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = c.textSecondary) }
                 Text(
                     if (item.quest.id == item.root.id) item.root.title else "${item.root.title} · ${item.quest.title}",
                     style = MaterialTheme.typography.bodySmall, color = c.textSecondary,
@@ -230,6 +240,26 @@ private fun CalendarRow(item: CalendarItem, zone: kotlinx.datetime.TimeZone, onO
                 if (item.step.isDone) Icons.Rounded.CheckCircle else Icons.Rounded.Schedule,
                 contentDescription = if (item.step.isDone) "Done" else "Scheduled",
                 tint = if (item.step.isDone) c.violet else c.textSecondary,
+            )
+        }
+    }
+}
+
+/** A practice on a day: a session logged, or one its rhythm asks for. */
+@Composable
+private fun PracticeRow(day: PracticeDay, step: String?, onOpen: () -> Unit) {
+    val c = Quest.colors
+    QuestCard(onClick = onOpen, onClickLabel = "Open practice") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                MetaLabel(stringResource(R.string.practice_label))
+                Text(day.quest.title, style = MaterialTheme.typography.bodyLarge, color = if (day.done) c.textSecondary else c.text)
+                if (!day.done && step != null) Text(step, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+            }
+            Icon(
+                if (day.done) Icons.Rounded.CheckCircle else Icons.Rounded.Schedule,
+                contentDescription = if (day.done) "Session logged" else "Session planned",
+                tint = if (day.done) c.violet else c.textSecondary,
             )
         }
     }

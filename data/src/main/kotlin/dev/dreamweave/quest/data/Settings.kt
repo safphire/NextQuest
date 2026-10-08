@@ -39,8 +39,31 @@ data class AppSettings(
     val syncCursor: Long = 0,
     /** Id of the event at [syncCursor] on the server: a different one there means the server was reset or restored. */
     val syncCursorEventId: String? = null,
+    /**
+     * The highest server cursor this phone's pushes reached, and the id of the event the
+     * server holds there. A server restored to a backup taken between our last pull and
+     * those pushes no longer has them: its latest cursor is lower, or a different event sits
+     * at this cursor. The phone then re-sends its log (D-1102).
+     */
+    val syncPushedThrough: Long = 0,
+    val syncPushedThroughEventId: String? = null,
     val lastSyncAt: Long? = null,
     val lastSyncError: String? = null,
+    // ---- v1.1 (device-local; nothing here changes quest state) ----
+    /** Focus timer preset in minutes (10 / 25 / 50), remembered. */
+    val focusMinutes: Int = 25,
+    /** "Stuck?" after this many days without touching a step (2–7). */
+    val stuckDays: Int = 3,
+    /** Local day (ISO) of the last time the app was opened: fresh-start offers happen on the first open of a day. */
+    val lastOpenDay: String? = null,
+    /** The day a fresh start is on offer (ISO) and why (AWAY / NEW_WEEK / NEW_MONTH); cleared once answered. */
+    val freshStartOfferDay: String? = null,
+    val freshStartReason: String? = null,
+    /** Offers dismissed in a row; two pause the offer until [freshStartPausedUntil] (ISO day). */
+    val freshStartDismissals: Int = 0,
+    val freshStartPausedUntil: String? = null,
+    /** The forgiveness line was dismissed on this day (ISO). */
+    val forgivenessDismissedOn: String? = null,
 )
 
 // A corrupt settings file resets settings rather than crashing every launch. The quest log
@@ -67,8 +90,18 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val serverUrl = stringPreferencesKey("server_url")
         val syncCursor = longPreferencesKey("sync_cursor")
         val syncCursorEventId = stringPreferencesKey("sync_cursor_event_id")
+        val syncPushedThrough = longPreferencesKey("sync_pushed_through")
+        val syncPushedThroughEventId = stringPreferencesKey("sync_pushed_through_event_id")
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncError = stringPreferencesKey("last_sync_error")
+        val focusMinutes = intPreferencesKey("focus_minutes")
+        val stuckDays = intPreferencesKey("stuck_days")
+        val lastOpenDay = stringPreferencesKey("last_open_day")
+        val freshStartOfferDay = stringPreferencesKey("fresh_start_offer_day")
+        val freshStartReason = stringPreferencesKey("fresh_start_reason")
+        val freshStartDismissals = intPreferencesKey("fresh_start_dismissals")
+        val freshStartPausedUntil = stringPreferencesKey("fresh_start_paused_until")
+        val forgivenessDismissedOn = stringPreferencesKey("forgiveness_dismissed_on")
     }
 
     val settings: Flow<AppSettings> = store.data.map(::read)
@@ -92,8 +125,18 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             if (n.serverUrl != null) p[K.serverUrl] = n.serverUrl else p.remove(K.serverUrl)
             p[K.syncCursor] = n.syncCursor
             if (n.syncCursorEventId != null) p[K.syncCursorEventId] = n.syncCursorEventId else p.remove(K.syncCursorEventId)
+            p[K.syncPushedThrough] = n.syncPushedThrough
+            if (n.syncPushedThroughEventId != null) p[K.syncPushedThroughEventId] = n.syncPushedThroughEventId else p.remove(K.syncPushedThroughEventId)
             if (n.lastSyncAt != null) p[K.lastSyncAt] = n.lastSyncAt else p.remove(K.lastSyncAt)
             if (n.lastSyncError != null) p[K.lastSyncError] = n.lastSyncError else p.remove(K.lastSyncError)
+            p[K.focusMinutes] = n.focusMinutes
+            p[K.stuckDays] = n.stuckDays
+            p.putOrRemove(K.lastOpenDay, n.lastOpenDay)
+            p.putOrRemove(K.freshStartOfferDay, n.freshStartOfferDay)
+            p.putOrRemove(K.freshStartReason, n.freshStartReason)
+            p[K.freshStartDismissals] = n.freshStartDismissals
+            p.putOrRemove(K.freshStartPausedUntil, n.freshStartPausedUntil)
+            p.putOrRemove(K.forgivenessDismissedOn, n.forgivenessDismissedOn)
         }
     }
 
@@ -111,7 +154,21 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         serverUrl = p[K.serverUrl],
         syncCursor = p[K.syncCursor] ?: 0,
         syncCursorEventId = p[K.syncCursorEventId],
+        syncPushedThrough = p[K.syncPushedThrough] ?: 0,
+        syncPushedThroughEventId = p[K.syncPushedThroughEventId],
         lastSyncAt = p[K.lastSyncAt],
         lastSyncError = p[K.lastSyncError],
+        focusMinutes = p[K.focusMinutes] ?: 25,
+        stuckDays = p[K.stuckDays] ?: 3,
+        lastOpenDay = p[K.lastOpenDay],
+        freshStartOfferDay = p[K.freshStartOfferDay],
+        freshStartReason = p[K.freshStartReason],
+        freshStartDismissals = p[K.freshStartDismissals] ?: 0,
+        freshStartPausedUntil = p[K.freshStartPausedUntil],
+        forgivenessDismissedOn = p[K.forgivenessDismissedOn],
     )
+
+    private fun androidx.datastore.preferences.core.MutablePreferences.putOrRemove(key: Preferences.Key<String>, value: String?) {
+        if (value != null) this[key] = value else remove(key)
+    }
 }

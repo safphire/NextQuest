@@ -121,9 +121,10 @@ object VaultMarkdown {
         return out
     }
 
-    fun render(state: QuestState, tz: TimeZone, occupied: Map<String, String?> = emptyMap()): List<Note> {
+    /** [nowMs] dates a practice's "this week" line. */
+    fun render(state: QuestState, tz: TimeZone, occupied: Map<String, String?> = emptyMap(), nowMs: Long = System.currentTimeMillis()): List<Note> {
         val names = names(state, occupied)
-        return state.quests.values.sortedBy { it.id }.map { q -> Note(q.id, names.getValue(q.id) + ".md", note(state, q, names, tz)) }
+        return state.quests.values.sortedBy { it.id }.map { q -> Note(q.id, names.getValue(q.id) + ".md", note(state, q, names, tz, nowMs)) }
     }
 
     private val lineBreaks = Regex("[\r\n\u000B\u000C\u0085\u2028\u2029]+")
@@ -157,11 +158,12 @@ object VaultMarkdown {
 
     private fun yamlString(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    private fun note(state: QuestState, q: Quest, names: Map<String, String>, tz: TimeZone): String = buildString {
+    private fun note(state: QuestState, q: Quest, names: Map<String, String>, tz: TimeZone, nowMs: Long): String = buildString {
         appendLine("---")
         appendLine("id: ${q.id}")
-        appendLine("type: ${if (q.isRoot) "quest" else "subquest"}")
+        appendLine("type: ${if (q.isPractice) "practice" else if (q.isRoot) "quest" else "subquest"}")
         appendLine("status: ${q.status.name.lowercase()}")
+        q.rhythm?.let { appendLine("rhythm: ${yamlString(Practices.label(it))}") }
         q.parentId?.let { p -> names[p]?.let { appendLine("parent: ${yamlString("[[$it]]")}") } }
         appendLine("created: ${date(q.createdAt, tz)}")
         appendLine("completed: ${q.completedAt?.let { date(it, tz) } ?: ""}")
@@ -174,10 +176,20 @@ object VaultMarkdown {
             appendLine("> ${inline(it)}")
             appendLine()
         }
+        if (q.obstacle != null || q.plan != null) {
+            q.obstacle?.let { appendLine("obstacle:: ${inline(it)}") }
+            q.plan?.let { appendLine("plan:: ${inline(it)}") }
+            appendLine()
+        }
         val step = if (q.isRoot) state.effectiveStep(q.id) else state.openStep(q.id)
         if (q.status.isOpen) {
-            appendLine("next-step:: ${step?.text?.let(::inline) ?: "(none yet)"}")
+            appendLine("${if (q.isPractice) "next-session" else "next-step"}:: ${step?.text?.let(::inline) ?: "(none yet)"}")
+            step?.cue?.let { appendLine("cue:: ${inline(it)}") }
             step?.dueAt?.let { appendLine("due:: ${dateTime(it, tz)}") }
+            q.rhythm?.let { r ->
+                val week = Practices.week(r, Practices.sessionDays(state, q.id), Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz).date)
+                appendLine("this-week:: ${week.done}/${week.target}")
+            }
             if (step != null && q.isRoot && step.questId != q.id) names[step.questId]?.let { appendLine("next-step-from:: [[$it]]") }
             appendLine()
         }

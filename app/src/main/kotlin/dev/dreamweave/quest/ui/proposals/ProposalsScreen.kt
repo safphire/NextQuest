@@ -58,13 +58,21 @@ import dev.dreamweave.quest.ui.components.QuestCard
 import dev.dreamweave.quest.ui.components.QuietButton
 import dev.dreamweave.quest.ui.sheets.SwapDialog
 import dev.dreamweave.quest.ui.sheets.TextPromptDialog
+import dev.dreamweave.quest.ui.sheets.rememberSavedDialog
+import kotlinx.serialization.Serializable
 import dev.dreamweave.quest.ui.theme.Quest
 import dev.dreamweave.quest.util.Format
 
 /** Follow-up questions an acceptance may need. */
-private sealed interface Ask {
-    data class Edit(val proposal: Proposal) : Ask
+@Serializable
+internal sealed interface Ask {
+    @Serializable
+    data class Edit(val proposalId: String) : Ask
+
+    @Serializable
     data class NextStep(val proposalId: String, val track: Boolean?, val parkQuestId: String?) : Ask
+
+    @Serializable
     data class Swap(val proposalId: String, val nextStep: String?) : Ask
 }
 
@@ -73,7 +81,7 @@ fun ProposalsScreen(vm: QuestViewModel, state: QuestState, settings: AppSettings
     val c = Quest.colors
     val now by vm.now.collectAsStateWithLifecycle()
     val pending = state.pendingProposals
-    var ask by remember { mutableStateOf<Ask?>(null) }
+    var ask by rememberSavedDialog(Ask.serializer())
 
     fun accept(p: Proposal, track: Boolean? = null, parkQuestId: String? = null, nextStep: String? = null) {
         val wantsTrack = track ?: (ProposalOps.decode(p.op, p.payload) as? AddQuestPayload)?.track ?: false
@@ -120,7 +128,7 @@ fun ProposalsScreen(vm: QuestViewModel, state: QuestState, settings: AppSettings
             ProposalCard(
                 p, state, now,
                 onReject = { vm.run { decide(p.id, Decision.Reject) } },
-                onEdit = { ask = Ask.Edit(p) },
+                onEdit = { ask = Ask.Edit(p.id) },
                 onAccept = { accept(p) },
                 onToInbox = { accept(p, track = false) },
                 onTrack = { accept(p, track = true) },
@@ -149,16 +157,16 @@ fun ProposalsScreen(vm: QuestViewModel, state: QuestState, settings: AppSettings
             },
         )
         is Ask.Edit -> {
-            val p = a.proposal
-            val decoded = ProposalOps.decode(p.op, p.payload)
+            val p = state.proposals[a.proposalId]
+            val decoded = p?.let { ProposalOps.decode(it.op, it.payload) }
             val (label, initial) = when (decoded) {
                 is SetNextStepPayload -> "Step" to decoded.text
                 is AddQuestPayload -> "Quest" to decoded.title
                 is AddSubquestPayload -> "Subquest" to decoded.title
                 else -> null to ""
             }
-            if (label == null) {
-                androidx.compose.runtime.LaunchedEffect(p.id) { ask = null }
+            if (p == null || label == null) {
+                androidx.compose.runtime.LaunchedEffect(a.proposalId) { ask = null }
             } else {
                 TextPromptDialog(
                     title = "Edit proposal", message = label, confirmLabel = "Accept edited", initial = initial,

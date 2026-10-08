@@ -188,6 +188,7 @@ class GameTest {
             Counters(
                 stepsDone = 50, questsDone = 5, subquestsDone = 10, inboxSorted = 10,
                 subquestsCreated = 1, proposalsAccepted = 1, bestStreak = 7, xp = Levels.totalFor(5),
+                focusBlocks = 1, focusMinutes = 600,
             ),
         )
         assertEquals(Achievement.entries.toSet(), all)

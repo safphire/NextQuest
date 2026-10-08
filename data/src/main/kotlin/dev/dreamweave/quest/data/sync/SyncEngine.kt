@@ -4,6 +4,7 @@ package dev.dreamweave.quest.data.sync
 import dev.dreamweave.quest.core.CoreJson
 import dev.dreamweave.quest.core.Envelope
 import dev.dreamweave.quest.core.Event
+import dev.dreamweave.quest.data.AppSettings
 import dev.dreamweave.quest.data.QuestRepository
 import dev.dreamweave.quest.data.SettingsStore
 import dev.dreamweave.quest.protocol.PairRequest
@@ -65,7 +66,7 @@ class SyncEngine(
             // dies before the token is saved, the phone is simply not paired yet.
             repository.markAllUnpushed()
             tokens.token = response.token
-            settings.update { it.copy(serverUrl = server, syncCursor = 0, syncCursorEventId = null, lastSyncAt = null, lastSyncError = null) }
+            settings.update { it.copy(serverUrl = server, syncCursor = 0, syncCursorEventId = null, syncPushedThrough = 0, syncPushedThroughEventId = null, lastSyncAt = null, lastSyncError = null) }
         }
         null
     }.also { if (it == null) sync() }
@@ -80,13 +81,13 @@ class SyncEngine(
      */
     suspend fun reconcile() = mutex.withLock {
         if (tokens.token == null && settings.current().serverUrl != null) {
-            forget(error = "This phone was restored or reset. Pair it with your server again.")
+            forget(error = "This phone was restored or reset. Pair it with your server in Settings to resume sync.")
         }
     }
 
     private suspend fun forget(error: String?) {
         tokens.token = null
-        settings.update { it.copy(serverUrl = null, syncCursor = 0, syncCursorEventId = null, lastSyncAt = null, lastSyncError = error) }
+        settings.update { it.copy(serverUrl = null, syncCursor = 0, syncCursorEventId = null, syncPushedThrough = 0, syncPushedThroughEventId = null, lastSyncAt = null, lastSyncError = error) }
     }
 
     suspend fun sync(): SyncOutcome = mutex.withLock {
@@ -122,7 +123,7 @@ class SyncEngine(
         e is SerializationException || e is ContentConvertException ->
             SyncOutcome.Failed("The server's reply wasn't understood. Update the app and the server to matching versions.", retry = false)
         e !is SyncHttpException -> SyncOutcome.Failed("Can't reach the server.", retry = true)
-        e.status == 401 -> SyncOutcome.Failed("This phone was removed from the server. Pair it again in Settings.", retry = false, unpaired = true)
+        e.status == 401 -> SyncOutcome.Failed("This phone was removed from the server. Pair it in Settings to resume sync.", retry = false, unpaired = true)
         e.status == 429 || e.status >= 500 -> SyncOutcome.Failed(e.message ?: "The server is busy.", retry = true)
         else -> SyncOutcome.Failed(e.message ?: "The server refused the request.", retry = false)
     }
@@ -137,16 +138,26 @@ class SyncEngine(
         var pushed = 0
         val refused = linkedMapOf<String, String>() // event id → reason, so a retried refusal counts once
         val pushFailure = try {
-            if (cursor > 0 && serverWasReset(server, token, cursor, cursorEventId)) {
+            // One empty push probes the server's latest cursor for both checks below.
+            val latest = if (cursor > 0 || start.syncPushedThrough > 0) transport.push(server, token, PushRequest(emptyList())).cursor else 0L
+            if (cursor > 0 && serverWasReset(server, token, latest, cursor, cursorEventId)) {
                 // Reset, or restored from an older backup: pull from the start and offer it the
                 // whole log again. Unpushed first: if the round stops in between, the next one
                 // still sees the old cursor and detects the reset again.
                 withContext(NonCancellable) {
                     repository.markAllUnpushed()
-                    settings.update { it.copy(syncCursor = 0, syncCursorEventId = null) }
+                    settings.update { it.copy(syncCursor = 0, syncCursorEventId = null, syncPushedThrough = 0, syncPushedThroughEventId = null) }
                 }
                 cursor = 0
                 cursorEventId = null
+            } else if (pushesWereLost(server, token, latest, start)) {
+                // Restored to a backup taken after our last pull but before some of our pushes:
+                // the pulled part is intact, the pushes after it are gone. Offer the log again
+                // (the server keeps each event once) and forget the watermark.
+                withContext(NonCancellable) {
+                    repository.markAllUnpushed()
+                    settings.update { it.copy(syncPushedThrough = 0, syncPushedThroughEventId = null) }
+                }
             }
             // Edits made while a round runs are picked up by another pass (sync work is KEEP,
             // so a running round is never cancelled by a newer request).
@@ -178,7 +189,14 @@ class SyncEngine(
             }
             cursor = r.cursor
             cursorEventId = r.events.lastOrNull()?.event?.id ?: cursorEventId
-            settings.update { it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId) }
+            // Once the pull has passed the push watermark, the pull-cursor check covers those pushes.
+            settings.update {
+                if (cursor >= it.syncPushedThrough) {
+                    it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId, syncPushedThrough = 0, syncPushedThroughEventId = null)
+                } else {
+                    it.copy(syncCursor = cursor, syncCursorEventId = cursorEventId)
+                }
+            }
             if (!r.hasMore) break
         }
         if (pushFailure != null) return failure(pushFailure)
@@ -201,11 +219,39 @@ class SyncEngine(
      * ours, or the event at our cursor is a different one (restored from an older backup and
      * since overtaken by other devices' pushes). An empty push is a cheap probe of the latest.
      */
-    private suspend fun serverWasReset(server: String, token: String, cursor: Long, cursorEventId: String?): Boolean {
-        if (transport.push(server, token, PushRequest(emptyList())).cursor < cursor) return true
+    private suspend fun serverWasReset(server: String, token: String, latest: Long, cursor: Long, cursorEventId: String?): Boolean {
+        if (latest < cursor) return true
         if (cursorEventId == null) return false // pulled before ids were remembered
         val at = transport.pull(server, token, cursor - 1, 1).events.firstOrNull()
         return at == null || at.cursor != cursor || at.event.id != cursorEventId
+    }
+
+    /**
+     * Whether pushes this phone made after its last pull are gone from the server: the
+     * server's latest cursor is below the highest cursor our pushes reached, or another
+     * event sits there now (restored, then overtaken by other devices).
+     */
+    private suspend fun pushesWereLost(server: String, token: String, latest: Long, s: AppSettings): Boolean {
+        if (s.syncPushedThrough <= 0) return false
+        if (latest < s.syncPushedThrough) return true
+        val id = s.syncPushedThroughEventId ?: return false
+        return !holds(server, token, s.syncPushedThrough, id)
+    }
+
+    /** True when the server's event at [cursor] is [eventId]. */
+    private suspend fun holds(server: String, token: String, cursor: Long, eventId: String): Boolean {
+        val at = transport.pull(server, token, cursor - 1, 1).events.firstOrNull()
+        return at != null && at.cursor == cursor && at.event.id == eventId
+    }
+
+    /**
+     * Remembers the highest cursor a push of ours reached, with the id of the event the server
+     * holds there, so a later restore below it is noticed ([pushesWereLost]).
+     */
+    private suspend fun rememberPushedThrough(server: String, token: String, cursor: Long) {
+        if (cursor <= settings.current().syncPushedThrough) return
+        val at = transport.pull(server, token, cursor - 1, 1).events.firstOrNull()?.takeIf { it.cursor == cursor } ?: return
+        settings.update { it.copy(syncPushedThrough = cursor, syncPushedThroughEventId = at.event.id) }
     }
 
     /**
@@ -222,6 +268,8 @@ class SyncEngine(
             if (page.isEmpty()) break
             for (batch in bySize(page)) {
                 val r = transport.push(server, token, PushRequest(batch))
+                // Duplicates count too: a push whose reply was lost was stored, and is only confirmed now.
+                if (r.accepted + r.duplicates > 0) rememberPushedThrough(server, token, r.cursor)
                 val retryLater = r.rejected.filter { "future" in it.reason }.map { it.id }.toSet()
                 repository.markPushed(batch.map { it.id }.filter { it !in retryLater })
                 val byId = batch.associateBy { it.id }

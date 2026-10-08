@@ -49,6 +49,8 @@ data class ProposeSetNextStepInput(
     @SerialName("quest_id") val questId: String,
     val text: String,
     @SerialName("due_at") val dueAt: String? = null,
+    /** If-then cue: when or where (v1.1). */
+    val cue: String? = null,
     val reason: String,
 )
 
@@ -75,11 +77,43 @@ data class ProposeScheduleStepInput(
     /** ISO-8601 date-time, or null to remove the date. */
     @SerialName("due_at") val dueAt: String? = null,
     val alarm: Boolean? = null,
+    /** v1.1: a when/where cue; "" removes it. With a cue and no due_at, the date is left alone. */
+    val cue: String? = null,
     val reason: String,
 )
 
 @Serializable
 data class ProposeParkQuestInput(@SerialName("quest_id") val questId: String, val reason: String)
+
+/** How often a practice wants a session (v1.1). */
+@Serializable
+enum class RhythmKindDto {
+    @SerialName("daily") DAILY,
+    @SerialName("weekdays") WEEKDAYS,
+    @SerialName("per_week") PER_WEEK,
+}
+
+@Serializable
+data class RhythmDto(
+    val kind: RhythmKindDto,
+    /** For weekdays: mon, tue, wed, thu, fri, sat, sun. */
+    val days: List<String>? = null,
+    /** For per_week: sessions per week, 1–7. */
+    val times: Int? = null,
+    /** Optional reminder time on session days, HH:MM. */
+    val reminder: String? = null,
+    /** Output only: e.g. "Mon, Wed, Fri · 07:30". */
+    val label: String? = null,
+)
+
+@Serializable
+data class ProposeAddPracticeInput(
+    val title: String,
+    val rhythm: RhythmDto,
+    @SerialName("first_step") val firstStep: String,
+    val why: String? = null,
+    val reason: String,
+)
 
 // ---- outputs -------------------------------------------------------------------------
 
@@ -91,6 +125,8 @@ data class StepDto(
     val alarm: Boolean = false,
     val done: Boolean = false,
     @SerialName("quest_id") val questId: String,
+    /** v1.1: when or where the step happens ("after lunch, at my desk"). */
+    val cue: String? = null,
 )
 
 @Serializable
@@ -116,7 +152,20 @@ data class QuestDto(
     val subquests: List<SubquestDto> = emptyList(),
     @SerialName("created_at") val createdAt: String,
     @SerialName("touched_at") val touchedAt: String,
+    /** v1.1: "quest" or "practice" (an ongoing quest with a rhythm that never completes). */
+    val kind: String = "quest",
+    val rhythm: RhythmDto? = null,
+    /** Practices: sessions logged this week against the rhythm. Informational; missed sessions never pile up. */
+    @SerialName("this_week") val thisWeek: WeekDto? = null,
+    /** Practices: the date of the next session the rhythm asks for (today when one is due). */
+    @SerialName("next_session_on") val nextSessionOn: String? = null,
+    /** v1.1 mental contrasting: what's in the way, and the user's if-then plan for it. */
+    val obstacle: String? = null,
+    val plan: String? = null,
 )
+
+@Serializable
+data class WeekDto(val done: Int, val target: Int)
 
 @Serializable
 data class TodayDto(

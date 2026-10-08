@@ -24,6 +24,10 @@ data class TodayCard(
     val stepOwner: Quest,
     val progress: Progress,
     val needsNextStep: Boolean,
+    /** For a practice: its rhythm, this week's sessions and whether one is due today (v1.1). */
+    val practice: Practices.Status? = null,
+    /** The step hasn't been touched for the stuck threshold: show a neutral "Stuck?" chip (v1.1). */
+    val stuck: Boolean = false,
 )
 
 data class TodayView(
@@ -58,17 +62,38 @@ data class LifetimeStats(
     val activeDays: Int,
     val achievementsUnlocked: Int,
     val achievementsTotal: Int,
+    val focusBlocks: Int = 0,
+    val focusMinutes: Int = 0,
 )
+
+/** A practice on the calendar: a logged session, or a day its rhythm asks for one (never a missed one). */
+data class PracticeDay(val quest: Quest, val date: LocalDate, val done: Boolean)
 
 object Views {
     const val RESUME_AFTER_DAYS = 2
+
+    /** "Stuck?" after this many days without touching a step (setting: 2–7). */
+    const val STUCK_DAYS_DEFAULT = 3
+    val STUCK_DAYS_RANGE = 2..7
+
+    /**
+     * A tracked quest (not a practice) whose visible step hasn't been set, edited, scheduled
+     * or focused on for [stuckDays] days. Neutral feedback, never a count or a colour.
+     */
+    fun isStuck(state: QuestState, rootId: String, nowMs: Long, stuckDays: Int = STUCK_DAYS_DEFAULT): Boolean {
+        val q = state.quests[rootId] ?: return false
+        if (q.status != QuestStatus.TRACKED || q.isPractice) return false
+        val step = state.effectiveStep(rootId) ?: return false
+        return nowMs - step.touchedAt >= stuckDays.coerceIn(STUCK_DAYS_RANGE) * 86_400_000L
+    }
 
     fun progress(state: QuestState, questId: String): Progress {
         val kids = state.children(questId).filter { it.status != QuestStatus.DROPPED }
         return Progress(kids.count { it.status == QuestStatus.DONE }, kids.size)
     }
 
-    fun today(state: QuestState, nowMs: Long, tz: TimeZone): TodayView {
+    fun today(state: QuestState, nowMs: Long, tz: TimeZone, stuckDays: Int = STUCK_DAYS_DEFAULT): TodayView {
+        val day = Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz).date
         val cards = state.tracked.map { q ->
             TodayCard(
                 quest = q,
@@ -76,6 +101,8 @@ object Views {
                 stepOwner = state.effectiveStepOwner(q.id) ?: q,
                 progress = progress(state, q.id),
                 needsNextStep = state.needsNextStep(q.id),
+                practice = Practices.status(state, q, day),
+                stuck = isStuck(state, q.id, nowMs, stuckDays),
             )
         }
         return TodayView(
@@ -126,6 +153,20 @@ object Views {
             .sortedWith(compareBy<CalendarItem>({ it.step.dueAt }, { it.step.id }))
             .toList()
 
+    /**
+     * Practices on the calendar from [from] to [to]: days with a logged session, and the
+     * days ahead (from [today]) that tracked practices ask for. Days that passed without a
+     * session are not shown: no backlog.
+     */
+    fun practiceCalendar(state: QuestState, from: LocalDate, to: LocalDate, today: LocalDate): List<PracticeDay> {
+        val out = mutableListOf<PracticeDay>()
+        for (q in state.quests.values.filter { it.isPractice && it.status != QuestStatus.DROPPED }) {
+            Practices.sessionDays(state, q.id).filter { it in from..to }.forEach { out += PracticeDay(q, it, done = true) }
+            if (q.status == QuestStatus.TRACKED) Practices.plannedDays(state, q, from, to, today).forEach { out += PracticeDay(q, it, done = false) }
+        }
+        return out.sortedWith(compareBy<PracticeDay>({ it.date }, { it.quest.title.lowercase() }, { it.quest.id }))
+    }
+
     fun chronicle(state: QuestState): List<ChronicleEntry> =
         state.quests.values.filter { it.isRoot && it.status == QuestStatus.DONE && it.completedAt != null }
             .map { q ->
@@ -150,6 +191,7 @@ object Views {
             subquestsDone = c.subquestsDone, inboxSorted = c.inboxSorted, proposalsAccepted = c.proposalsAccepted,
             currentStreak = streak.current, bestStreak = streak.best, activeDays = activeDays,
             achievementsUnlocked = state.achievements.size, achievementsTotal = Achievement.entries.size,
+            focusBlocks = c.focusBlocks, focusMinutes = c.focusMinutes,
         )
     }
 }

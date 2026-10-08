@@ -1,0 +1,77 @@
+{
+    "title": "propose_add_practice",
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+            "description": "Short practice title, e.g. Singing."
+        },
+        "rhythm": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "daily",
+                        "weekdays",
+                        "per_week"
+                    ]
+                },
+                "days": {
+                    "type": [
+                        "array",
+                        "null"
+                    ],
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "times": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "reminder": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "label": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "kind"
+            ],
+            "additionalProperties": false,
+            "description": "How often: {\"kind\":\"daily\"}, {\"kind\":\"weekdays\",\"days\":[\"mon\",\"wed\",\"fri\"]} or {\"kind\":\"per_week\",\"times\":3}; optional \"reminder\":\"07:30\"."
+        },
+        "first_step": {
+            "type": "string",
+            "description": "The first session, small and concrete, e.g. 20 min scales."
+        },
+        "why": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional: why it matters to the user."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
+        }
+    },
+    "required": [
+        "title",
+        "rhythm",
+        "first_step",
+        "reason"
+    ],
+    "additionalProperties": false
+}

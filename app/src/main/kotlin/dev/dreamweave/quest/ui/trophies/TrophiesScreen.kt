@@ -38,7 +38,9 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.dreamweave.quest.R
 import dev.dreamweave.quest.core.Achievement
+import androidx.compose.ui.res.stringResource
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.core.Views
 import dev.dreamweave.quest.ui.QuestViewModel
@@ -77,6 +79,25 @@ fun TrophiesScreen(vm: QuestViewModel, state: QuestState) {
                         Stat("Quests", "${stats.questsDone}", Modifier.weight(1f))
                         Stat("Subquests", "${stats.subquestsDone}", Modifier.weight(1f))
                         Stat("Days", "${stats.activeDays}", Modifier.weight(1f))
+                    }
+                    Row {
+                        Stat(stringResource(R.string.trophies_focus_minutes), "${stats.focusMinutes}", Modifier.weight(1f))
+                        Spacer(Modifier.weight(3f))
+                    }
+                }
+            }
+        }
+        // C5: when the current chain is shorter, the best one is kept and shown, never lost.
+        if (stats.bestStreak > 0 && stats.currentStreak < stats.bestStreak) {
+            item {
+                QuestCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.EmojiEvents, contentDescription = null, tint = c.violet)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            stringResource(R.string.trophies_best_streak, stats.bestStreak),
+                            style = MaterialTheme.typography.titleSmall, color = c.text,
+                        )
                     }
                 }
             }

@@ -20,6 +20,8 @@ data class NextStep(
     val text: String,
     val dueAt: Long? = null,
     val alarm: Boolean = false,
+    /** If-then cue: when or where (v1.1). */
+    val cue: String? = null,
 )
 
 @Serializable
@@ -31,6 +33,8 @@ data class QuestCreated(
     /** INBOX or LATER only — tracking always goes through [QuestStatusSet]. */
     val status: QuestStatus = QuestStatus.INBOX,
     val order: Double? = null,
+    /** Makes it a practice (v1.1). Top-level quests only. */
+    val rhythm: Rhythm? = null,
 )
 
 @Serializable
@@ -39,7 +43,16 @@ data class QuestEdited(
     val title: String? = null,
     val why: String? = null,
     val clearWhy: Boolean = false,
+    /** Mental contrasting (v1.1): "What's in the way?" and "If that happens, I will…". */
+    val obstacle: String? = null,
+    val clearObstacle: Boolean = false,
+    val plan: String? = null,
+    val clearPlan: Boolean = false,
 )
+
+/** Turns a top-level quest into a practice with [rhythm], changes its rhythm, or (null) makes it a plain quest again. */
+@Serializable
+data class QuestRhythmSet(val questId: String, val rhythm: Rhythm? = null)
 
 @Serializable
 data class QuestStatusSet(val questId: String, val status: QuestStatus, val next: NextStep? = null)
@@ -60,6 +73,7 @@ data class StepSet(
     val text: String,
     val dueAt: Long? = null,
     val alarm: Boolean = false,
+    val cue: String? = null,
 )
 
 @Serializable
@@ -69,6 +83,8 @@ data class StepEdited(
     val dueAt: Long? = null,
     val clearDue: Boolean = false,
     val alarm: Boolean? = null,
+    val cue: String? = null,
+    val clearCue: Boolean = false,
 )
 
 /**
@@ -105,6 +121,31 @@ data class StepReminderDismissed(val stepId: String)
 @Serializable
 data class SlotCapSet(val cap: Int)
 
+/**
+ * A focus block on a step ran to its end (v1.1). Credits effort XP (+5 per block of at
+ * least 10 minutes, at most 60 XP per local day). Stopping early writes nothing.
+ */
+@Serializable
+data class FocusBlockCompleted(
+    val questId: String,
+    val stepId: String,
+    val minutes: Int,
+    /** The completing device's local day: the daily cap counts these, like streaks (D-108). */
+    val local: LocalStamp? = null,
+)
+
+/** Reverses a completion (`step.completed` or `quest.completed`) exactly, shortly after it (v1.1, D-1112). */
+@Serializable
+data class CompletionUndone(val eventId: String)
+
+/**
+ * "Clean slate" (v1.1): open steps of tracked quests lose their snoozes and past due
+ * times (they become undated). With [parkOthers], every tracked quest except
+ * [keepQuestId] is parked. XP, level, achievements and streaks are untouched.
+ */
+@Serializable
+data class FreshStart(val keepQuestId: String? = null, val parkOthers: Boolean = false)
+
 @Serializable
 data class ProposalCreated(
     val proposalId: String,
@@ -139,6 +180,10 @@ object Events {
     fun stepReminderDismissed(p: StepReminderDismissed) =
         pending(EventTypes.STEP_REMINDER_DISMISSED, StepReminderDismissed.serializer(), p)
     fun slotCapSet(p: SlotCapSet) = pending(EventTypes.SLOT_CAP_SET, SlotCapSet.serializer(), p)
+    fun questRhythmSet(p: QuestRhythmSet) = pending(EventTypes.QUEST_RHYTHM_SET, QuestRhythmSet.serializer(), p)
+    fun focusBlockCompleted(p: FocusBlockCompleted) = pending(EventTypes.FOCUS_BLOCK_COMPLETED, FocusBlockCompleted.serializer(), p)
+    fun completionUndone(p: CompletionUndone) = pending(EventTypes.COMPLETION_UNDONE, CompletionUndone.serializer(), p)
+    fun freshStart(p: FreshStart) = pending(EventTypes.FRESH_START, FreshStart.serializer(), p)
     fun proposalCreated(p: ProposalCreated) = pending(EventTypes.PROPOSAL_CREATED, ProposalCreated.serializer(), p)
     fun proposalAccepted(id: String) = pending(EventTypes.PROPOSAL_ACCEPTED, ProposalDecided.serializer(), ProposalDecided(id))
     fun proposalRejected(id: String) = pending(EventTypes.PROPOSAL_REJECTED, ProposalDecided.serializer(), ProposalDecided(id))

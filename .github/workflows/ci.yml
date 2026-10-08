@@ -48,8 +48,46 @@ jobs:
       - name: Android lint
         run: ./gradlew :data:lintDebug :app:lintDebug
 
-      - name: Assemble debug APK
-        run: ./gradlew :app:assembleDebug
+      # Every CI debug APK is signed with the same key, so each one installs over the last
+      # without losing data (docs/RELEASING.md). Without the secret the runner's throwaway
+      # debug key is used, which Android refuses as an update: say so loudly. The key and its
+      # passwords exist only for this step.
+      - name: Assemble debug APK (stable debug key when configured)
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEY_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
+          QUEST_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_B64" ] && [ -n "$DEBUG_KEYSTORE_PASSWORD" ] && [ -n "$DEBUG_KEY_ALIAS" ]; then
+            echo "$DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/debug.keystore"
+            export DEBUG_KEYSTORE_PATH="$RUNNER_TEMP/debug.keystore"
+            STABLE=1
+          else
+            STABLE=0
+          fi
+          ./gradlew :app:assembleDebug
+          rm -f "$RUNNER_TEMP/debug.keystore"
+          if [ "$STABLE" = 1 ]; then
+            echo "Debug APK signed with the stable debug key: it installs over earlier CI builds." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=Unstable debug signing::DEBUG_KEYSTORE_B64 (and its passwords) are not set. This APK is signed with a throwaway key and will NOT install over a previous CI build without uninstalling it (and its data) first. See docs/RELEASING.md."
+            {
+              echo "## ⚠️ Debug APK signed with a throwaway key"
+              echo ""
+              echo "The \`DEBUG_KEYSTORE_B64\` secret (or its passwords) is missing, so this APK uses the runner's default debug key."
+              echo "Android will refuse to install it over an earlier CI build: you would have to uninstall first, which **deletes the app's data**."
+              echo "One-time fix: docs/RELEASING.md → *Stable debug signing*."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: quest-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
       - name: Compile instrumented tests
         run: ./gradlew :data:assembleDebugAndroidTest :app:assembleDebugAndroidTest
@@ -74,12 +112,9 @@ jobs:
             exit 1
           fi
 
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: quest-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+      - name: Remove the debug key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/debug.keystore"
 
       - name: Upload reports on failure
         if: failure()

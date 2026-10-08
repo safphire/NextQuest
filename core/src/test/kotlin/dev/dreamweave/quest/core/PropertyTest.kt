@@ -65,7 +65,7 @@ class PropertyTest {
         val roots = open.filter { it.isRoot }
         val q = open.randomOrNull(rnd)
         val root = roots.randomOrNull(rnd)
-        val pending: List<PendingEvent> = when (rnd.nextInt(16)) {
+        val pending: List<PendingEvent> = when (rnd.nextInt(22)) {
             0, 1 -> listOf(Events.questCreated(QuestCreated(newId(), "Quest ${rnd.nextInt(1000)}", status = if (rnd.nextBoolean()) QuestStatus.INBOX else QuestStatus.LATER)))
             2, 3 -> q?.let { listOf(Events.stepSet(StepSet(newId(), it.id, "step ${rnd.nextInt(1000)}", dueAt = if (rnd.nextBoolean()) d.clock() + rnd.nextLong(1, 86_400_000L * 10) else null))) } ?: emptyList()
             4, 5 -> root?.let { listOf(Events.questStatusSet(QuestStatusSet(it.id, QuestStatus.TRACKED, next = if (rnd.nextBoolean()) NextStep(newId(), it.id, "go") else null))) } ?: emptyList()
@@ -113,6 +113,34 @@ class PropertyTest {
                     emptyList()
                 }
             }
+            // ---- v1.1: practices, focus blocks, undo, fresh start, rhythm and cue changes ----
+            16 -> listOf(
+                Events.questCreated(
+                    QuestCreated(
+                        newId(), "Practice ${rnd.nextInt(99)}",
+                        status = if (rnd.nextBoolean()) QuestStatus.INBOX else QuestStatus.LATER,
+                        rhythm = randomRhythm(rnd),
+                    ),
+                ),
+            )
+            17 -> st.steps.values.filter { !it.superseded }.sortedBy { it.id }.randomOrNull(rnd)?.let {
+                listOf(
+                    Events.focusBlockCompleted(
+                        FocusBlockCompleted(it.questId, it.id, listOf(5, 10, 25, 50, 300).random(rnd), LocalStamp.of(d.clock(), tz).takeIf { rnd.nextInt(4) != 0 }),
+                    ),
+                )
+            } ?: emptyList()
+            18 -> {
+                // Undo a recent completion (sometimes one that can no longer be undone).
+                val target = d.known.values.filter { it.type == EventTypes.STEP_COMPLETED || it.type == EventTypes.QUEST_COMPLETED }
+                    .sortedWith(Event.ORDER).takeLast(3).randomOrNull(rnd)
+                target?.let { listOf(Events.completionUndone(CompletionUndone(it.id))) } ?: emptyList()
+            }
+            19 -> listOf(Events.freshStart(FreshStart(st.tracked.randomOrNull(rnd)?.id ?: root?.id, parkOthers = rnd.nextInt(3) == 0)))
+            20 -> root?.let { listOf(Events.questRhythmSet(QuestRhythmSet(it.id, if (rnd.nextInt(3) == 0) null else randomRhythm(rnd)))) } ?: emptyList()
+            21 -> st.steps.values.filter { !it.isDone && !it.superseded }.sortedBy { it.id }.randomOrNull(rnd)?.let {
+                listOf(Events.stepEdited(StepEdited(it.id, cue = if (rnd.nextBoolean()) "after lunch" else null, clearCue = rnd.nextInt(3) == 0)))
+            } ?: emptyList()
             else -> {
                 // Rogue writes that bypass commit validation: they must be neutralized by the fold.
                 val target = root?.id ?: return
@@ -127,14 +155,33 @@ class PropertyTest {
         if (pending.isNotEmpty()) d.tryCommit(pending)
     }
 
+    private fun randomRhythm(rnd: Random): Rhythm = when (rnd.nextInt(4)) {
+        0 -> Rhythm(RhythmKind.DAILY, reminderMinute = if (rnd.nextBoolean()) rnd.nextInt(0, 24 * 60) else null)
+        1 -> Rhythm(RhythmKind.WEEKDAYS, days = (1..7).shuffled(rnd).take(rnd.nextInt(1, 5)))
+        2 -> Rhythm(RhythmKind.PER_WEEK, times = rnd.nextInt(1, 8))
+        else -> Rhythm(RhythmKind.WEEKDAYS) // invalid on purpose
+    }
+
     /** Folds [events] one at a time, checking the invariants after every single event. */
     private fun foldChecking(events: List<Event>): QuestState {
         val f = Folder(tz)
         val mayBeFlagged = HashSet<String>()
+        // Roots showing "Needs next step" right before each completion: an undo may bring that back.
+        val flaggedBefore = HashMap<String, Set<String>>()
         for (e in events.sortedWith(Event.ORDER)) {
             val before = f.snapshot()
             val outcome = f.apply(e)
             val after = f.snapshot()
+            if (outcome == Outcome.Applied && (e.type == EventTypes.STEP_COMPLETED || e.type == EventTypes.QUEST_COMPLETED)) {
+                flaggedBefore[e.id] = before.tracked.filter { before.needsNextStep(it.id) }.map { it.id }.toSet()
+            }
+            if (outcome == Outcome.Applied && e.type == EventTypes.COMPLETION_UNDONE) {
+                mayBeFlagged += flaggedBefore[Events.decode(CompletionUndone.serializer(), e.payload)!!.eventId].orEmpty()
+            }
+            // A practice is never left without its next session, whatever completed it.
+            for (q in after.tracked) if (q.isPractice && outcome == Outcome.Applied) {
+                assertTrue(!after.needsNextStep(q.id) || q.id in mayBeFlagged || flaggedBefore.values.any { q.id in it }, "practice ${q.id} lost its session via ${e.type}")
+            }
             assertTrue(after.tracked.size <= after.slotCap, "cap exceeded after ${e.type}")
             if (Actors.isMcp(e.actor) && outcome == Outcome.Applied) {
                 assertEquals(EventTypes.PROPOSAL_CREATED, e.type)
@@ -163,6 +210,8 @@ class PropertyTest {
         assertEquals(a.slotCap, b.slotCap, msg)
         assertEquals(a.counters, b.counters, msg)
         assertEquals(a.achievements, b.achievements, msg)
+        assertEquals(a.focusBlocks, b.focusBlocks, msg)
+        assertEquals(a.undoable, b.undoable, msg)
     }
 
     @Test
@@ -195,10 +244,15 @@ class PropertyTest {
             assertSameState(reference, Fold.of(all + all.take(5), tz), "duplicates round $round")
 
             // From scratch == incremental.
+            val effortScratch = reference.focusBlocks.groupBy { it.day }.values.sumOf { blocks -> minOf(blocks.size * Xp.FOCUS_BLOCK, Xp.FOCUS_DAILY_CAP) }
             val xpScratch = reference.steps.values.count { it.isDone } * Xp.STEP +
                 reference.quests.values.count { it.status == QuestStatus.DONE && it.isRoot } * Xp.QUEST +
-                reference.quests.values.count { it.status == QuestStatus.DONE && !it.isRoot } * Xp.SUBQUEST
+                reference.quests.values.count { it.status == QuestStatus.DONE && !it.isRoot } * Xp.SUBQUEST +
+                effortScratch
             assertEquals(xpScratch.toLong(), reference.xp, "xp round $round")
+            assertTrue(reference.focusBlocks.groupBy { it.day }.values.all { b -> b.sumOf { it.xp } <= Xp.FOCUS_DAILY_CAP }, "effort cap round $round")
+            assertTrue(reference.quests.values.none { it.isPractice && it.status == QuestStatus.DONE }, "a practice completed, round $round")
+            assertTrue(reference.quests.values.none { it.isPractice && !it.isRoot }, "a subquest practice, round $round")
             val stepDays = reference.steps.values.mapNotNull { s -> s.doneDay?.let { it to s.doneMinute!! } }
             assertEquals(Streaks.compute(stepDays, now, tz), reference.streak(now), "streak round $round")
             // Counters recounted from the entities (independent of the fold's bookkeeping)...

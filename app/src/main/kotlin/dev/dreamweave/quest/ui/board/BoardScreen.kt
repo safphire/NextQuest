@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.serialization.Serializable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ import dev.dreamweave.quest.core.BoardTab
 import dev.dreamweave.quest.core.Quest as QuestModel
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.core.QuestStatus
+import dev.dreamweave.quest.core.Practices
 import dev.dreamweave.quest.core.Views
 import dev.dreamweave.quest.ui.QuestViewModel
 import dev.dreamweave.quest.ui.RootActions
@@ -62,11 +64,13 @@ import dev.dreamweave.quest.ui.components.QuestCard
 import dev.dreamweave.quest.ui.components.QuietButton
 import dev.dreamweave.quest.ui.components.SlotPips
 import dev.dreamweave.quest.ui.sheets.SwapDialog
+import dev.dreamweave.quest.ui.sheets.rememberSavedDialog
 import dev.dreamweave.quest.ui.sheets.TextPromptDialog
 import dev.dreamweave.quest.ui.theme.Quest
 
 /** Tracking can need two answers: a first step, and which quest to park when slots are full. */
-private data class TrackFlow(val questId: String, val step: String? = null, val needsSwap: Boolean = false)
+@Serializable
+internal data class TrackFlow(val questId: String, val step: String? = null, val needsSwap: Boolean = false)
 
 @Composable
 fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
@@ -75,7 +79,7 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(BoardSort.TOUCHED) }
     var sortMenu by remember { mutableStateOf(false) }
-    var trackFlow by remember { mutableStateOf<TrackFlow?>(null) }
+    var trackFlow by rememberSavedDialog(TrackFlow.serializer())
     val items = remember(state, tab, query, sort) { Views.board(state, tab, query, sort) }
     val inboxCount = remember(state) { Views.board(state, BoardTab.INBOX).size }
     val laterCount = remember(state) { Views.board(state, BoardTab.LATER).size }
@@ -180,8 +184,9 @@ fun BoardScreen(vm: QuestViewModel, state: QuestState, actions: RootActions) {
         when {
             q == null -> trackFlow = null
             state.effectiveStep(q.id) == null && flow.step == null -> TextPromptDialog(
-                title = "First step",
-                message = "A tracked quest always shows its next step. What's the first one for “${q.title}”?",
+                title = if (q.isPractice) "First session" else "First step",
+                message = if (q.isPractice) "What's the first session of “${q.title}”? (e.g. 20 min scales)"
+                else "A tracked quest always shows its next step. What's the first one for “${q.title}”?",
                 confirmLabel = if (flow.needsSwap) "Next" else "Track",
                 placeholder = "The very next physical action",
                 onDismiss = { trackFlow = null },
@@ -224,6 +229,7 @@ private fun BoardItem(
     QuestCard(onClick = onOpen, onClickLabel = "Open quest") {
         Column {
             Text(quest.title, style = MaterialTheme.typography.titleMedium, color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            quest.rhythm?.let { MetaLabel("Practice · ${Practices.label(it)}") }
             quest.why?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }

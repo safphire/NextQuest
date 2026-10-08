@@ -69,6 +69,19 @@ import dev.dreamweave.quest.ui.sheets.ConfirmDialog
 import dev.dreamweave.quest.ui.sheets.DueDatePicker
 import dev.dreamweave.quest.ui.sheets.SwapDialog
 import dev.dreamweave.quest.ui.sheets.TextPromptDialog
+import dev.dreamweave.quest.ui.sheets.rememberSavedDialog
+import kotlinx.serialization.Serializable
+import dev.dreamweave.quest.R
+import dev.dreamweave.quest.core.Practices
+import dev.dreamweave.quest.core.Rhythm
+import dev.dreamweave.quest.core.RhythmKind
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.res.stringResource
 import dev.dreamweave.quest.ui.theme.MonoNumber
 import dev.dreamweave.quest.ui.theme.PlexMono
 import dev.dreamweave.quest.ui.theme.Quest
@@ -76,27 +89,53 @@ import dev.dreamweave.quest.util.Format
 import androidx.compose.material.icons.rounded.SearchOff
 
 /** Every prompt this screen can show, one at a time. */
-private sealed interface Prompt {
+@Serializable
+internal sealed interface Prompt {
+    @Serializable
     data object Rename : Prompt
+    @Serializable
     data object Why : Prompt
+    @Serializable
     data class SetStep(val questId: String) : Prompt
+    @Serializable
     data class EditStep(val stepId: String, val text: String) : Prompt
+    @Serializable
     data class Schedule(val stepId: String, val due: Long?, val alarm: Boolean) : Prompt
+    @Serializable
     data object AddSubquest : Prompt
     /** Completing or dropping [questId] leaves [ownerId] without a step: ask for one. */
+    @Serializable
     data class LeaveNeedsStep(val questId: String, val drop: Boolean, val ownerId: String) : Prompt
+    @Serializable
     data class FocusNeedsStep(val childId: String?) : Prompt
+    @Serializable
     data object TrackNeedsStep : Prompt
+    @Serializable
     data class Swap(val firstStep: String?) : Prompt
+    @Serializable
     data object ConfirmDrop : Prompt
+
+    // v1.1
+    @Serializable
+    data class EditRhythm(val rhythm: Rhythm?) : Prompt
+
+    @Serializable
+    data object Obstacle : Prompt
+
+    @Serializable
+    data object Plan : Prompt
+
+    @Serializable
+    data class Cue(val stepId: String, val cue: String) : Prompt
 }
 
 @Composable
 fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, actions: RootActions) {
     val c = Quest.colors
     val now by vm.now.collectAsStateWithLifecycle()
-    var prompt by remember { mutableStateOf<Prompt?>(null) }
+    var prompt by rememberSavedDialog(Prompt.serializer())
     var menu by remember { mutableStateOf(false) }
+    var notesOpen by rememberSaveable { mutableStateOf(false) }
     val quest = state.quests[questId]
 
     if (quest == null) {
@@ -165,7 +204,13 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                         if (isRoot && open && quest.status != QuestStatus.INBOX) {
                             DropdownMenuItem(text = { Text("Move to inbox") }, onClick = { menu = false; vm.run { toInbox(questId) } })
                         }
-                        if (open) {
+                        if (isRoot && open && children.none { it.status.isOpen }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(if (quest.isPractice) R.string.practice_change_rhythm else R.string.practice_make)) },
+                                onClick = { menu = false; prompt = Prompt.EditRhythm(quest.rhythm ?: Rhythm(RhythmKind.DAILY)) },
+                            )
+                        }
+                        if (open && !quest.isPractice) {
                             DropdownMenuItem(
                                 text = { Text(if (isRoot) "Complete quest · +${Xp.QUEST} XP" else "Complete subquest · +${Xp.SUBQUEST} XP") },
                                 onClick = {
@@ -173,6 +218,8 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                                     if (isRoot) vm.run { completeQuest(questId) } else leaveChild(questId, drop = false)
                                 },
                             )
+                        }
+                        if (open) {
                             DropdownMenuItem(text = { Text("Drop") }, onClick = { menu = false; prompt = Prompt.ConfirmDrop })
                         }
                         if (quest.status == QuestStatus.DROPPED) {
@@ -204,6 +251,29 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                 color = if (quest.why == null) c.textSecondary else c.text,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = "Edit why it matters") { prompt = Prompt.Why }.padding(vertical = 12.dp),
             )
+            // Mental contrasting (C4): collapsed under "Why it matters" until opened or filled.
+            if (isRoot) {
+                val hasNotes = quest.obstacle != null || quest.plan != null
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = stringResource(R.string.obstacle_section)) { notesOpen = !notesOpen },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    MetaLabel(stringResource(R.string.obstacle_section), secondary = !hasNotes, modifier = Modifier.weight(1f))
+                    Icon(if (notesOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = c.textSecondary)
+                }
+                if (notesOpen) {
+                    NoteLine(stringResource(R.string.obstacle_title), quest.obstacle, stringResource(R.string.obstacle_placeholder)) { prompt = Prompt.Obstacle }
+                    NoteLine(stringResource(R.string.plan_title), quest.plan, stringResource(R.string.plan_placeholder)) { prompt = Prompt.Plan }
+                }
+            }
+            quest.rhythm?.let { r ->
+                val status = Practices.status(state, quest, Format.dateOf(now, vm.zone))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    MetaLabel("${stringResource(R.string.practice_label)} · ${Practices.label(r)}", modifier = Modifier.weight(1f))
+                    status?.let { ChipText(stringResource(R.string.practice_this_week, it.week.done, it.week.target), tinted = true) }
+                }
+                Text(stringResource(R.string.practice_never_complete), style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+            }
             if (progress.total > 0) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("${progress.done}/${progress.total}", style = MonoNumber, color = c.textSecondary)
@@ -229,7 +299,15 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                                     .clickable(onClickLabel = "Edit step") { prompt = Prompt.EditStep(step.id, step.text) }
                                     .wrapContentHeight(Alignment.CenterVertically).padding(vertical = 4.dp),
                             )
-                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                step.cue ?: stringResource(R.string.cue_title),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = c.textSecondary,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .clickable(onClickLabel = stringResource(R.string.cue_edit)) { prompt = Prompt.Cue(step.id, step.cue.orEmpty()) }
+                                    .wrapContentHeight(Alignment.CenterVertically),
+                            )
+                            Spacer(Modifier.height(4.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.clickable(role = Role.Button, onClickLabel = "Set date and time") {
                                     prompt = Prompt.Schedule(step.id, step.dueAt, step.alarm)
@@ -255,16 +333,32 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                                 )
                             }
                             Spacer(Modifier.height(12.dp))
-                            LimeButton(
-                                "Done · +${Xp.STEP} XP", onClick = { actions.done(step.id) }, large = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                            val focusLabel = stringResource(R.string.focus_button_a11y, step.text)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                LimeButton(
+                                    "Done · +${Xp.STEP} XP", onClick = { actions.done(step.id) }, large = true,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                QuietButton(
+                                    stringResource(R.string.focus_button), onClick = { actions.focus(step.id, null) }, icon = Icons.Rounded.Timer,
+                                    modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = focusLabel },
+                                )
+                            }
                         }
                     }
                 }
             }
         }
-        if (isRoot) {
+        if (open) {
+            item {
+                TextButton(onClick = { actions.askAi(questId) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = c.violet)
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.ask_ai), color = c.text)
+                }
+            }
+        }
+        if (isRoot && !quest.isPractice) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SectionTitle("Subquests", Modifier.weight(1f))
@@ -421,6 +515,35 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
             tracked = state.tracked, cap = state.slotCap, onDismiss = { prompt = null },
             onPark = { parkId -> prompt = null; vm.run { track(questId, firstStep = p.firstStep, parkQuestId = parkId) } },
         )
+        is Prompt.EditRhythm -> RhythmDialog(
+            initial = p.rhythm ?: Rhythm(RhythmKind.DAILY),
+            isPractice = quest.isPractice,
+            onDismiss = { prompt = null },
+            onSave = { r ->
+                prompt = null
+                if (r.reminderMinute != null) actions.reminderSet()
+                vm.run { setRhythm(questId, r) }
+            },
+            onMakeQuest = {
+                prompt = null
+                vm.run { setRhythm(questId, null) }
+            },
+        )
+        Prompt.Obstacle -> TextPromptDialog(
+            title = stringResource(R.string.obstacle_title), confirmLabel = "Save", initial = quest.obstacle.orEmpty(), allowEmpty = true,
+            placeholder = stringResource(R.string.obstacle_placeholder),
+            onDismiss = { prompt = null }, onConfirm = { t -> prompt = null; vm.run { editObstacle(questId, obstacle = t) } },
+        )
+        Prompt.Plan -> TextPromptDialog(
+            title = stringResource(R.string.plan_title), confirmLabel = "Save", initial = quest.plan.orEmpty(), allowEmpty = true,
+            placeholder = stringResource(R.string.plan_placeholder),
+            onDismiss = { prompt = null }, onConfirm = { t -> prompt = null; vm.run { editObstacle(questId, plan = t) } },
+        )
+        is Prompt.Cue -> TextPromptDialog(
+            title = stringResource(R.string.cue_title), confirmLabel = "Save", initial = p.cue, allowEmpty = true,
+            placeholder = stringResource(R.string.cue_placeholder),
+            onDismiss = { prompt = null }, onConfirm = { t -> prompt = null; vm.run { setCue(p.stepId, t) } },
+        )
         Prompt.ConfirmDrop -> ConfirmDialog(
             title = "Drop “${quest.title}”?",
             body = "It leaves your lists. Your XP stays, and you can restore it from this screen.",
@@ -431,5 +554,15 @@ fun QuestDetailScreen(vm: QuestViewModel, state: QuestState, questId: String, ac
                 if (isRoot) vm.run(onOk = actions.back) { drop(questId) } else leaveChild(questId, drop = true)
             },
         )
+    }
+}
+
+/** One line of the obstacle-and-plan section: its label, the text (or a hint), tap to edit. */
+@Composable
+private fun NoteLine(label: String, value: String?, hint: String, onEdit: () -> Unit) {
+    val c = Quest.colors
+    Column(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = label, onClick = onEdit).padding(vertical = 6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = c.violet)
+        Text(value ?: hint, style = MaterialTheme.typography.bodyMedium, color = if (value == null) c.textSecondary else c.text)
     }
 }

@@ -6,6 +6,7 @@ import dev.dreamweave.quest.protocol.GetQuestInput
 import dev.dreamweave.quest.protocol.ListProposalsInput
 import dev.dreamweave.quest.protocol.ListQuestsInput
 import dev.dreamweave.quest.protocol.NoInput
+import dev.dreamweave.quest.protocol.ProposeAddPracticeInput
 import dev.dreamweave.quest.protocol.ProposeAddQuestInput
 import dev.dreamweave.quest.protocol.ProposeAddSubquestInput
 import dev.dreamweave.quest.protocol.ProposeCompleteStepInput
@@ -36,6 +37,9 @@ object McpToolSpecs {
 
     private val reasonDoc = mapOf("reason" to "Why you suggest this, in one or two sentences. Shown to the user next to the proposal.")
     private val dueDoc = mapOf("due_at" to "Optional ISO-8601 date-time, e.g. 2026-10-02T09:00 (server time zone) or with an offset.")
+    private val cueDoc = mapOf(
+        "cue" to "Optional if-then cue: when or where the step happens, e.g. \"after lunch, at my desk\" (at most 200 characters).",
+    )
 
     val GET_TODAY = McpToolSpec(
         "get_today", "Today",
@@ -44,13 +48,15 @@ object McpToolSpecs {
     )
     val LIST_QUESTS = McpToolSpec(
         "list_quests", "List quests",
-        "Lists quests by status: inbox (captured, unsorted), tracked, later (parked), done or dropped. Without a status, lists all open quests.",
+        "Lists quests by status: inbox (captured, unsorted), tracked, later (parked), done or dropped. Without a status, lists all open quests. " +
+            "Each quest has a kind: quest, or practice (an ongoing habit with a rhythm that never completes).",
         ListQuestsInput.serializer(), readOnly = true,
         mapOf("status" to "One of inbox, tracked, later, done, dropped. Omit for all open quests."),
     )
     val GET_QUEST = McpToolSpec(
         "get_quest", "Quest details",
-        "One quest with its why, next step, subquests (and which one is focused) and the ids you need for proposals.",
+        "One quest with its why, obstacle and if-then plan, next step (with its when/where cue), subquests (and which one is focused) " +
+            "and the ids you need for proposals. For a practice: its rhythm, this week's sessions and the next session day.",
         GetQuestInput.serializer(), readOnly = true,
         mapOf("quest_id" to "The quest id from get_today or list_quests."),
     )
@@ -86,9 +92,10 @@ object McpToolSpecs {
     )
     val PROPOSE_SET_NEXT_STEP = McpToolSpec(
         "propose_set_next_step", "Propose a next step",
-        "Proposes a new next step for a quest or subquest (replacing its current one). If a quest's visible step comes from a focused subquest, propose it for that subquest." + APPROVAL,
+        "Proposes a new next step for a quest or subquest (replacing its current one), optionally with a when/where cue. " +
+            "If a quest's visible step comes from a focused subquest, propose it for that subquest. For a practice, this changes its next session." + APPROVAL,
         ProposeSetNextStepInput.serializer(), readOnly = false,
-        mapOf("quest_id" to "Quest or subquest id.", "text" to "One concrete, small action.") + dueDoc + reasonDoc,
+        mapOf("quest_id" to "Quest or subquest id.", "text" to "One concrete, small action.") + dueDoc + cueDoc + reasonDoc,
     )
     val PROPOSE_COMPLETE_STEP = McpToolSpec(
         "propose_complete_step", "Propose marking a step done",
@@ -104,13 +111,15 @@ object McpToolSpecs {
     )
     val PROPOSE_SCHEDULE_STEP = McpToolSpec(
         "propose_schedule_step", "Propose a date for a step",
-        "Proposes a date and time (and optionally an alarm) for a quest's current step, or removing its date." + APPROVAL,
+        "Proposes a date and time (and optionally an alarm) for a quest's current step, or removing its date, and/or a when/where cue. " +
+            "To change only the cue, give cue and leave out due_at." + APPROVAL,
         ProposeScheduleStepInput.serializer(), readOnly = false,
         mapOf(
             "quest_id" to "Quest or subquest id.",
             "step_id" to "Optional; defaults to the quest's current step.",
             "due_at" to "ISO-8601 date-time (server time zone unless an offset is given), or null to remove the date.",
             "alarm" to "Ring an alarm at that time.",
+            "cue" to "Optional when/where cue, e.g. \"before standup\"; an empty string removes it.",
         ) + reasonDoc,
     )
     val PROPOSE_PARK_QUEST = McpToolSpec(
@@ -120,8 +129,23 @@ object McpToolSpecs {
         mapOf("quest_id" to "Top-level quest id.") + reasonDoc,
     )
 
+    val PROPOSE_ADD_PRACTICE = McpToolSpec(
+        "propose_add_practice", "Propose a practice",
+        "Proposes a practice: an ongoing habit (singing, drawing, study) with a rhythm that never completes. Each session is its step; " +
+            "missed sessions never pile up. It lands in the inbox; tracking it uses a slot like any quest." + APPROVAL,
+        ProposeAddPracticeInput.serializer(), readOnly = false,
+        mapOf(
+            "title" to "Short practice title, e.g. Singing.",
+            "rhythm" to "How often: {\"kind\":\"daily\"}, {\"kind\":\"weekdays\",\"days\":[\"mon\",\"wed\",\"fri\"]} or " +
+                "{\"kind\":\"per_week\",\"times\":3}; optional \"reminder\":\"07:30\".",
+            "first_step" to "The first session, small and concrete, e.g. 20 min scales.",
+            "why" to "Optional: why it matters to the user.",
+        ) + reasonDoc,
+    )
+
     val all: List<McpToolSpec> = listOf(
         GET_TODAY, LIST_QUESTS, GET_QUEST, GET_HISTORY, GET_STATS, LIST_PROPOSALS,
         PROPOSE_ADD_QUEST, PROPOSE_SET_NEXT_STEP, PROPOSE_COMPLETE_STEP, PROPOSE_ADD_SUBQUEST, PROPOSE_SCHEDULE_STEP, PROPOSE_PARK_QUEST,
+        PROPOSE_ADD_PRACTICE,
     )
 }

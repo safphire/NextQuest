@@ -11,6 +11,10 @@ plugins {
 // Release signing comes from the environment (CI secrets) — never from files in git.
 val releaseKeystore: String? = System.getenv("RELEASE_KEYSTORE_PATH")
 
+// One persistent debug key for CI builds (docs/RELEASING.md), so each CI debug APK installs
+// over the previous one without losing data. Without it, the default debug key is used.
+val debugKeystore: String? = System.getenv("DEBUG_KEYSTORE_PATH")?.takeIf { file(it).isFile }
+
 android {
     namespace = "dev.dreamweave.quest"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -20,8 +24,10 @@ android {
         applicationId = "dev.dreamweave.quest"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI debug builds count up with the CI run number (QUEST_VERSION_CODE), so a newer CI APK
+        // is always an update. Release builds set their own (docs/RELEASING.md).
+        versionCode = 100 + (System.getenv("QUEST_VERSION_CODE")?.toIntOrNull() ?: 0)
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Every instrumented test starts from a fresh install (cleared data, own process).
         testInstrumentationRunnerArguments["clearPackageData"] = "true"
@@ -33,6 +39,15 @@ android {
     }
 
     signingConfigs {
+        if (debugKeystore != null) {
+            create("stableDebug") {
+                storeFile = file(debugKeystore)
+                storePassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("DEBUG_KEY_ALIAS")
+                // PKCS12 keystores use one password for the store and the key.
+                keyPassword = System.getenv("DEBUG_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: System.getenv("DEBUG_KEYSTORE_PASSWORD")
+            }
+        }
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = file(releaseKeystore)
@@ -44,7 +59,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // LAN testing (D-1106): debug builds may pair with a server over plain HTTP on the
+            // local network. Release builds only ever talk HTTPS.
+            buildConfigField("boolean", "ALLOW_CLEARTEXT", "true")
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            if (debugKeystore != null) signingConfig = signingConfigs.getByName("stableDebug")
+        }
         release {
+            buildConfigField("boolean", "ALLOW_CLEARTEXT", "false")
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

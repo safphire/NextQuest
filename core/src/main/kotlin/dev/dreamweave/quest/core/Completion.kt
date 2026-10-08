@@ -28,6 +28,10 @@ object Completion {
         val rootId = state.rootOf(owner.id) ?: owner.id
         val root = state.quests.getValue(rootId)
 
+        // A practice never finishes, and its next session appears by itself (D-1110).
+        if (owner.isPractice) {
+            return Plan(stepId, owner.id, rootId, owner.id, nextRequired = false, canFinishOwner = false, ownerIsRoot = true)
+        }
         if (finishOwner && owner.id == rootId) {
             return Plan(stepId, owner.id, rootId, null, nextRequired = false, canFinishOwner = true, ownerIsRoot = true)
         }

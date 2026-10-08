@@ -27,6 +27,13 @@
             ],
             "description": "Ring an alarm at that time."
         },
+        "cue": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional when/where cue, e.g. \"before standup\"; an empty string removes it."
+        },
         "reason": {
             "type": "string",
             "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."

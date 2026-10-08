@@ -319,3 +319,92 @@ restored-and-overtaken integration test: it fails before the fix and passes afte
 | Failure message says "nothing was changed" even after a commit | nit | FIXED: neutral wording |
 | A restored "finishing" flag for a step that now belongs to a top-level quest | nit | FIXED: ignored for top-level quests |
 | `ALLOWED_ORIGINS=" , "` yields an empty allow-list | nit | FIXED: falls back to the defaults; ConfigTest |
+
+# v1.1 reviews
+
+Same gate as v1 (docs/SPEC.md §10, repeated in the v1.1 brief): build, test and lint
+green, a self-check, then an independent reviewer subagent that has not seen the work
+grades every acceptance item PASS/FAIL with evidence; FAILs and high-severity issues
+are fixed and re-reviewed, up to three rounds.
+
+## Phase A — Fix round
+
+### Round 1 (independent reviewer, diff `ff5f597..cb04ab9`)
+
+| Item | Verdict |
+|---|---|
+| A1 Stable debug signing (secret, CI decode, fallback warning, RELEASING.md) | PASS (takes effect once the maintainer adds the secrets) |
+| A2 Alarm Back → silent reminder with Done / Snooze / Skip | PASS for the normal case (see issue 3) |
+| A3 Server-restore gap, push watermark, integration test | PASS on the logic (see issue 2) |
+| A4 Background crash paths fail quietly, failure-injection tests | PASS |
+| A5 Dialogs and sheets survive rotation and process death | PASS |
+| A6 LAN cleartext in debug only, mode shown in Settings → Sync | PASS |
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| No green CI run for the phase yet (one test method returned non-Unit; the next run was cancelled by a newer push) | major | FIXED: test fixed; CI green on 147c85d (all jobs, incl. emulator) |
+| The watermark ignores a push confirmed only as duplicates (reply lost the first time) | major | FIXED: duplicates move it too; test `aPushConfirmedOnlyAsDuplicates_isStillWatched` |
+| Back drops the reminder when the log isn't loaded / can't be read; load failure leaves a dead screen | major | FIXED: the reminder is rebuilt silent from the ringing notification; calm line + Close (D-1103) |
+| A replaced alarm (second alarm on screen) keeps ringing | minor | FIXED: silenced into a quiet reminder in `onNewIntent` |
+| A missing `DEBUG_KEY_PASSWORD` fails the build | minor | FIXED: falls back to the store password |
+| Extra probe requests every round; watermark never cleared | minor | FIXED: one shared probe; cleared once a pull passes it |
+| Tests use stand-ins (Calm directly, a stand-in dialog host, a memory server) | minor | Partly FIXED: every real dialog-state serializer round-trips (`DialogStateSaverTest`); the activities and the real EventStore stay covered by DEVICE_TEST §10 and the v1 integration test |
+| Nits: secrets visible to every step; summary written before assembling; versionCode in the release job; plain `remember` for Settings' time dialog | nit | FIXED (secrets only in the assemble step, APK uploaded right after it, explicit `QUEST_VERSION_CODE`, `rememberSaveable`) |
+| One commit for six features | nit | Accepted |
+
+## Phases B and C — Essentials and the focus layer
+
+### Round 1 (independent reviewer, `cb04ab9..ea7588b` and `147c85d..c272c4b`)
+
+| Item | Verdict |
+|---|---|
+| B1 Practices (rhythm, sessions, no backlog, cap, reminders/digest/widget/calendar/vault, MCP) | PASS |
+| B2 Undo (10-s bar, exact compensating event, property test, notification Undo, history) | FAIL: app didn't compile; see the undo findings |
+| B3 Focus timer + effort XP | PASS (by reading) |
+| B4 Stuck? | PASS |
+| B5 Ask AI | PASS |
+| C1 Reset (Breathe, Shrink, Fresh start) | PASS |
+| C2 Fresh-start moments | PASS |
+| C3 When/where cues | PASS |
+| C4 Obstacle and plan | PASS |
+| C5 Forgiveness, copy section, banned-word test | PASS |
+| Cap by every path · no MCP mutation without acceptance · banned words · a11y labels | PASS |
+| Build green | FAIL (compile errors) |
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `ToastHost`'s `when` not exhaustive; duplicate imports in Settings (compile errors) | blocker | FIXED (45398cc, 185f375) |
+| Undo of a step whose reminder already rang re-armed it at once (fired marker deleted on Done) | major | FIXED: markers kept for the undo window |
+| The quest-complete celebration covered the Undo bar for its 10 s | major | FIXED: the celebration carries Undo; the 10 s start after it closes |
+| Undo after a later completion kept the first achievement date (not "as if it never happened") | minor | FIXED: undo refused once lifetime counters moved; property test now also undoes late (D-1112) |
+| No Undo on widget completions; undo of a proposal completion | minor | Accepted / FIXED: widget keeps its toast; proposal acceptances aren't offered for undo (D-1112) |
+| A practice step with a date got two reminders under one key | minor | FIXED: practices are reminded by their rhythm only |
+| Ask AI on a practice asked for subquests (refused for practices) | minor | FIXED: asks for session ideas |
+| Focus races: stop during the end credit, stale Keep going, services stopping before `startForeground`, Done for a moved-on step silent | minor | FIXED; process death between ending and crediting can still lose that one block's XP (accepted: crediting first could double it) |
+| Digest dropped the Stuck? line with 7 cards; title counted resting practices | minor | FIXED |
+| Forgiveness "Set step" opens Shrink; Fresh start left Stuck? chips | minor | Shrink accepted (it is setting a smaller step, with the current one shown); Fresh start now restarts Stuck? |
+| Vault `this-week::` line rewrites notes weekly | minor | Accepted (the mirror only rewrites its own unchanged notes) |
+| Nits: undo bar lost on rotation; quest-undo copy; ResetSheet ignores a later OpenBreathe; autoboxing state; unused strings | nit | Copy made generic, `mutableIntStateOf`, unused strings removed; the rest accepted |
+
+## Final review (fresh reviewer, `ff5f597..69569fd`, all phases)
+
+Verdict: **ready for the maintainer's device test.** JVM suites (153 tests) and the
+core coverage gate pass; CI fully green at 185f375. Every fix listed above was found
+in the code.
+
+| Item | Verdict |
+|---|---|
+| A1–A6 | PASS (A1 takes effect once the secret is set) |
+| B1 Practices · B3 Focus timer · B4 Stuck? · B5 Ask AI | PASS |
+| B2 Undo | PASS, with the gaps below (fixed) |
+| C1–C5 | PASS |
+| D: README, MCP_TOOLS, SPEC v1.1, DEVICE_TEST entries, TalkBack labels, Breathe not animation-only | PASS |
+| Acceptance: signed update, exact undo + from-scratch fold (two-replica probe, 60 rounds), no practice backlog, cap on every path (probe: undo refused when its slot was reused), no MCP mutation (probe: `mcp:*` refused for every new event), effort cap (probe: 20 blocks → 60 XP), banned words, Phase A issues closed | PASS (screen-off Breathe and Doze timer need the device test) |
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| With two devices, an unrelated counter change synced from the other device blocked an undo, and the user's redo after it was then skipped too | minor (major across devices) | FIXED: an undo is refused only when an achievement unlocked since would still be earned without the completion (its date would be ambiguous); property test and a 400-round stress run pass (D-1112) |
+| No Undo after Done on the alarm screen | minor | FIXED: the 5-minute Undo notification, like a notification Done (the widget keeps its toast, D-1112) |
+| A refused Undo from the notification was silent | minor | FIXED: a calm notice |
+| Focus: process death between ending a block and crediting it | minor | Accepted (already in round 1) |
+| Nits: What's next used the time the sheet opened; a bare "after" chip saved "after"; Undo bar lost on rotation; D-1112 wording about edits; focus-block local-day check uses the client stamp; server pages still say "Try again"/"failed" | nit | First two FIXED, D-1112 reworded; the rest accepted (server pages are the owner's admin UI, outside the app copy rule) |
