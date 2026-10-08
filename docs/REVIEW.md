@@ -351,3 +351,37 @@ are fixed and re-reviewed, up to three rounds.
 | Tests use stand-ins (Calm directly, a stand-in dialog host, a memory server) | minor | Partly FIXED: every real dialog-state serializer round-trips (`DialogStateSaverTest`); the activities and the real EventStore stay covered by DEVICE_TEST §10 and the v1 integration test |
 | Nits: secrets visible to every step; summary written before assembling; versionCode in the release job; plain `remember` for Settings' time dialog | nit | FIXED (secrets only in the assemble step, APK uploaded right after it, explicit `QUEST_VERSION_CODE`, `rememberSaveable`) |
 | One commit for six features | nit | Accepted |
+
+## Phases B and C — Essentials and the focus layer
+
+### Round 1 (independent reviewer, `cb04ab9..ea7588b` and `147c85d..c272c4b`)
+
+| Item | Verdict |
+|---|---|
+| B1 Practices (rhythm, sessions, no backlog, cap, reminders/digest/widget/calendar/vault, MCP) | PASS |
+| B2 Undo (10-s bar, exact compensating event, property test, notification Undo, history) | FAIL: app didn't compile; see the undo findings |
+| B3 Focus timer + effort XP | PASS (by reading) |
+| B4 Stuck? | PASS |
+| B5 Ask AI | PASS |
+| C1 Reset (Breathe, Shrink, Fresh start) | PASS |
+| C2 Fresh-start moments | PASS |
+| C3 When/where cues | PASS |
+| C4 Obstacle and plan | PASS |
+| C5 Forgiveness, copy section, banned-word test | PASS |
+| Cap by every path · no MCP mutation without acceptance · banned words · a11y labels | PASS |
+| Build green | FAIL (compile errors) |
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `ToastHost`'s `when` not exhaustive; duplicate imports in Settings (compile errors) | blocker | FIXED (45398cc, 185f375) |
+| Undo of a step whose reminder already rang re-armed it at once (fired marker deleted on Done) | major | FIXED: markers kept for the undo window |
+| The quest-complete celebration covered the Undo bar for its 10 s | major | FIXED: the celebration carries Undo; the 10 s start after it closes |
+| Undo after a later completion kept the first achievement date (not "as if it never happened") | minor | FIXED: undo refused once lifetime counters moved; property test now also undoes late (D-1112) |
+| No Undo on widget completions; undo of a proposal completion | minor | Accepted / FIXED: widget keeps its toast; proposal acceptances aren't offered for undo (D-1112) |
+| A practice step with a date got two reminders under one key | minor | FIXED: practices are reminded by their rhythm only |
+| Ask AI on a practice asked for subquests (refused for practices) | minor | FIXED: asks for session ideas |
+| Focus races: stop during the end credit, stale Keep going, services stopping before `startForeground`, Done for a moved-on step silent | minor | FIXED; process death between ending and crediting can still lose that one block's XP (accepted: crediting first could double it) |
+| Digest dropped the Stuck? line with 7 cards; title counted resting practices | minor | FIXED |
+| Forgiveness "Set step" opens Shrink; Fresh start left Stuck? chips | minor | Shrink accepted (it is setting a smaller step, with the current one shown); Fresh start now restarts Stuck? |
+| Vault `this-week::` line rewrites notes weekly | minor | Accepted (the mirror only rewrites its own unchanged notes) |
+| Nits: undo bar lost on rotation; quest-undo copy; ResetSheet ignores a later OpenBreathe; autoboxing state; unused strings | nit | Copy made generic, `mutableIntStateOf`, unused strings removed; the rest accepted |
