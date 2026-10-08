@@ -385,3 +385,26 @@ are fixed and re-reviewed, up to three rounds.
 | Forgiveness "Set step" opens Shrink; Fresh start left Stuck? chips | minor | Shrink accepted (it is setting a smaller step, with the current one shown); Fresh start now restarts Stuck? |
 | Vault `this-week::` line rewrites notes weekly | minor | Accepted (the mirror only rewrites its own unchanged notes) |
 | Nits: undo bar lost on rotation; quest-undo copy; ResetSheet ignores a later OpenBreathe; autoboxing state; unused strings | nit | Copy made generic, `mutableIntStateOf`, unused strings removed; the rest accepted |
+
+## Final review (fresh reviewer, `ff5f597..69569fd`, all phases)
+
+Verdict: **ready for the maintainer's device test.** JVM suites (153 tests) and the
+core coverage gate pass; CI fully green at 185f375. Every fix listed above was found
+in the code.
+
+| Item | Verdict |
+|---|---|
+| A1–A6 | PASS (A1 takes effect once the secret is set) |
+| B1 Practices · B3 Focus timer · B4 Stuck? · B5 Ask AI | PASS |
+| B2 Undo | PASS, with the gaps below (fixed) |
+| C1–C5 | PASS |
+| D: README, MCP_TOOLS, SPEC v1.1, DEVICE_TEST entries, TalkBack labels, Breathe not animation-only | PASS |
+| Acceptance: signed update, exact undo + from-scratch fold (two-replica probe, 60 rounds), no practice backlog, cap on every path (probe: undo refused when its slot was reused), no MCP mutation (probe: `mcp:*` refused for every new event), effort cap (probe: 20 blocks → 60 XP), banned words, Phase A issues closed | PASS (screen-off Breathe and Doze timer need the device test) |
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| With two devices, an unrelated counter change synced from the other device blocked an undo, and the user's redo after it was then skipped too | minor (major across devices) | FIXED: an undo is refused only when an achievement unlocked since would still be earned without the completion (its date would be ambiguous); property test and a 400-round stress run pass (D-1112) |
+| No Undo after Done on the alarm screen | minor | FIXED: the 5-minute Undo notification, like a notification Done (the widget keeps its toast, D-1112) |
+| A refused Undo from the notification was silent | minor | FIXED: a calm notice |
+| Focus: process death between ending a block and crediting it | minor | Accepted (already in round 1) |
+| Nits: What's next used the time the sheet opened; a bare "after" chip saved "after"; Undo bar lost on rotation; D-1112 wording about edits; focus-block local-day check uses the client stamp; server pages still say "Try again"/"failed" | nit | First two FIXED, D-1112 reworded; the rest accepted (server pages are the owner's admin UI, outside the app copy rule) |
