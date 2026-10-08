@@ -319,3 +319,35 @@ restored-and-overtaken integration test: it fails before the fix and passes afte
 | Failure message says "nothing was changed" even after a commit | nit | FIXED: neutral wording |
 | A restored "finishing" flag for a step that now belongs to a top-level quest | nit | FIXED: ignored for top-level quests |
 | `ALLOWED_ORIGINS=" , "` yields an empty allow-list | nit | FIXED: falls back to the defaults; ConfigTest |
+
+# v1.1 reviews
+
+Same gate as v1 (docs/SPEC.md §10, repeated in the v1.1 brief): build, test and lint
+green, a self-check, then an independent reviewer subagent that has not seen the work
+grades every acceptance item PASS/FAIL with evidence; FAILs and high-severity issues
+are fixed and re-reviewed, up to three rounds.
+
+## Phase A — Fix round
+
+### Round 1 (independent reviewer, diff `ff5f597..cb04ab9`)
+
+| Item | Verdict |
+|---|---|
+| A1 Stable debug signing (secret, CI decode, fallback warning, RELEASING.md) | PASS (takes effect once the maintainer adds the secrets) |
+| A2 Alarm Back → silent reminder with Done / Snooze / Skip | PASS for the normal case (see issue 3) |
+| A3 Server-restore gap, push watermark, integration test | PASS on the logic (see issue 2) |
+| A4 Background crash paths fail quietly, failure-injection tests | PASS |
+| A5 Dialogs and sheets survive rotation and process death | PASS |
+| A6 LAN cleartext in debug only, mode shown in Settings → Sync | PASS |
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| No green CI run for the phase yet (one test method returned non-Unit; the next run was cancelled by a newer push) | major | FIXED: test fixed; CI green on 147c85d (all jobs, incl. emulator) |
+| The watermark ignores a push confirmed only as duplicates (reply lost the first time) | major | FIXED: duplicates move it too; test `aPushConfirmedOnlyAsDuplicates_isStillWatched` |
+| Back drops the reminder when the log isn't loaded / can't be read; load failure leaves a dead screen | major | FIXED: the reminder is rebuilt silent from the ringing notification; calm line + Close (D-1103) |
+| A replaced alarm (second alarm on screen) keeps ringing | minor | FIXED: silenced into a quiet reminder in `onNewIntent` |
+| A missing `DEBUG_KEY_PASSWORD` fails the build | minor | FIXED: falls back to the store password |
+| Extra probe requests every round; watermark never cleared | minor | FIXED: one shared probe; cleared once a pull passes it |
+| Tests use stand-ins (Calm directly, a stand-in dialog host, a memory server) | minor | Partly FIXED: every real dialog-state serializer round-trips (`DialogStateSaverTest`); the activities and the real EventStore stay covered by DEVICE_TEST §10 and the v1 integration test |
+| Nits: secrets visible to every step; summary written before assembling; versionCode in the release job; plain `remember` for Settings' time dialog | nit | FIXED (secrets only in the assemble step, APK uploaded right after it, explicit `QUEST_VERSION_CODE`, `rememberSaveable`) |
+| One commit for six features | nit | Accepted |
