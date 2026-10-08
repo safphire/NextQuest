@@ -55,6 +55,12 @@
                             },
                             "quest_id": {
                                 "type": "string"
+                            },
+                            "cue": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ]
                             }
                         },
                         "required": [
@@ -116,6 +122,12 @@
                                         },
                                         "quest_id": {
                                             "type": "string"
+                                        },
+                                        "cue": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ]
                                         }
                                     },
                                     "required": [
@@ -140,6 +152,93 @@
                     },
                     "touched_at": {
                         "type": "string"
+                    },
+                    "kind": {
+                        "type": "string"
+                    },
+                    "rhythm": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "daily",
+                                    "weekdays",
+                                    "per_week"
+                                ]
+                            },
+                            "days": {
+                                "type": [
+                                    "array",
+                                    "null"
+                                ],
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "times": {
+                                "type": [
+                                    "integer",
+                                    "null"
+                                ]
+                            },
+                            "reminder": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ]
+                            },
+                            "label": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "kind"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "this_week": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "properties": {
+                            "done": {
+                                "type": "integer"
+                            },
+                            "target": {
+                                "type": "integer"
+                            }
+                        },
+                        "required": [
+                            "done",
+                            "target"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "next_session_on": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "obstacle": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "plan": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
                     }
                 },
                 "required": [

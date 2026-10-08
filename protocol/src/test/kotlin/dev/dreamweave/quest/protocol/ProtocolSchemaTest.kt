@@ -41,7 +41,7 @@ class ProtocolSchemaTest {
             assertTrue("reason" in ((t.inputSchema["required"] as JsonArray).map { (it as JsonPrimitive).content }), t.name)
             assertTrue(t.name.startsWith("propose_"))
         }
-        assertEquals(12, McpToolSpecs.all.size)
-        assertEquals(12, McpToolSpecs.all.map { it.name }.toSet().size)
+        assertEquals(13, McpToolSpecs.all.size)
+        assertEquals(13, McpToolSpecs.all.map { it.name }.toSet().size)
     }
 }

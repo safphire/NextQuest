@@ -9,11 +9,31 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.math.pow
 import kotlin.math.roundToLong
 
-/** XP rewards. No penalties and no lost XP, ever: there is no negative entry here. */
+/**
+ * XP rewards. No penalties and no lost XP, ever: there is no negative entry here. (Undo
+ * reverses a completion the user takes back; that is a correction, not a penalty, D-1112.)
+ */
 object Xp {
     const val STEP = 15
     const val SUBQUEST = 40
     const val QUEST = 100
+
+    /** Effort XP (v1.1): per focus block of at least [Focus.MIN_MINUTES] that ran to its end. */
+    const val FOCUS_BLOCK = 5
+
+    /** Effort XP per local day is capped, so it can't be farmed. */
+    const val FOCUS_DAILY_CAP = 60
+}
+
+/** Focus timer rules (v1.1). */
+object Focus {
+    const val MIN_MINUTES = 10
+    const val MAX_MINUTES = 240
+    val PRESETS = listOf(10, 25, 50)
+    const val DEFAULT_MINUTES = 25
+
+    /** Effort XP a block earns when [alreadyToday] effort XP was earned on its day. */
+    fun xpFor(alreadyToday: Int): Int = (Xp.FOCUS_DAILY_CAP - alreadyToday).coerceIn(0, Xp.FOCUS_BLOCK)
 }
 
 data class LevelInfo(val level: Int, val xpIntoLevel: Long, val xpForNextLevel: Long) {
@@ -110,18 +130,37 @@ object Streaks {
  * earlier day — e.g. synced late from another device — triggers a rescan of the days.
  */
 class StreakTracker {
+    /** Each active day's first completion minute. */
     private val days = java.util.TreeMap<LocalDate, Int>()
+
+    /** Every completion minute per day (a completion can be undone, v1.1). */
+    private val minutes = HashMap<LocalDate, MutableList<Int>>()
     private var chain = 0
     var best = 0
         private set
 
     fun copy(): StreakTracker = StreakTracker().also {
         it.days.putAll(days)
+        for ((d, m) in minutes) it.minutes[d] = ArrayList(m)
         it.chain = chain
         it.best = best
     }
 
+    /** Takes back one completion (undo): the day stays active only if it has others. */
+    fun onUndo(day: LocalDate, minute: Int) {
+        val list = minutes[day] ?: return
+        if (!list.remove(minute)) return
+        if (list.isEmpty()) {
+            minutes.remove(day)
+            days.remove(day)
+        } else {
+            days[day] = list.min()
+        }
+        rescan()
+    }
+
     fun onStep(day: LocalDate, minute: Int) {
+        minutes.getOrPut(day) { ArrayList() }.add(minute)
         val last = if (days.isEmpty()) null else days.lastKey()
         val known = days[day]
         if (known != null && known <= minute) return
@@ -141,6 +180,7 @@ class StreakTracker {
     private fun rescan() {
         chain = 0
         best = 0
+        if (days.isEmpty()) return
         var prev: LocalDate? = null
         for ((d, m) in days) {
             chain = if (prev != null) {
@@ -200,6 +240,9 @@ data class Counters(
     val proposalsAccepted: Int = 0,
     val bestStreak: Int = 0,
     val xp: Long = 0,
+    /** Focus blocks that ran to their end, and their minutes (v1.1). */
+    val focusBlocks: Int = 0,
+    val focusMinutes: Int = 0,
 )
 
 enum class Achievement(val title: String, val description: String, val isUnlocked: (Counters) -> Boolean) {
@@ -215,6 +258,8 @@ enum class Achievement(val title: String, val description: String, val isUnlocke
     FIRST_TREE("Branching out", "Create your first subquest", { it.subquestsCreated >= 1 }),
     SUBQUESTS_10("Piece by piece", "Finish 10 subquests", { it.subquestsDone >= 10 }),
     FIRST_PROPOSAL("Good advice", "Accept your first AI proposal", { it.proposalsAccepted >= 1 }),
+    FIRST_FOCUS("Deep breath, deep work", "Finish your first focus block", { it.focusBlocks >= 1 }),
+    FOCUS_10H("Ten focused hours", "Spend 10 hours in focus blocks", { it.focusMinutes >= 600 }),
     ;
 
     companion object {
@@ -235,6 +280,15 @@ object Stats {
             doneSteps.mapNotNull { s -> s.doneDay?.let { d -> d to (s.doneMinute ?: 0) } },
             LocalDate(1970, 1, 1), 0,
         )
+        // Effort XP, re-derived from the blocks themselves: +5 each, at most 60 per local day.
+        val effortByDay = HashMap<LocalDate, Int>()
+        var effortXp = 0L
+        for (b in state.focusBlocks) {
+            val used = effortByDay[b.day] ?: 0
+            val xp = Focus.xpFor(used)
+            effortByDay[b.day] = used + xp
+            effortXp += xp
+        }
         return Counters(
             stepsDone = doneSteps.size,
             questsDone = quests.count { it.isRoot && it.status == QuestStatus.DONE },
@@ -245,7 +299,10 @@ object Stats {
             bestStreak = streak.best,
             xp = doneSteps.size.toLong() * Xp.STEP +
                 quests.count { it.isRoot && it.status == QuestStatus.DONE } * Xp.QUEST +
-                quests.count { !it.isRoot && it.status == QuestStatus.DONE } * Xp.SUBQUEST,
+                quests.count { !it.isRoot && it.status == QuestStatus.DONE } * Xp.SUBQUEST +
+                effortXp,
+            focusBlocks = state.focusBlocks.size,
+            focusMinutes = state.focusBlocks.sumOf { it.minutes },
         )
     }
 }

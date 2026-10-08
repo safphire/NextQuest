@@ -47,7 +47,15 @@ class QuestState internal constructor(
     private val streakTracker: StreakTracker,
     /** The time zone this replica uses for "today" (streak liveness, calendar). */
     val timeZone: TimeZone,
+    /** Focus blocks that ran to their end, in log order (v1.1). */
+    val focusBlocks: List<FocusBlock> = emptyList(),
+    /** Completions that can still be undone: event id → when they happened (v1.1). */
+    val undoable: Map<String, Long> = emptyMap(),
 ) {
+    /** True while [eventId] (a completion) can be undone at [nowMs]. */
+    fun canUndo(eventId: String, nowMs: Long): Boolean =
+        undoable[eventId]?.let { nowMs - it <= Undo.WINDOW_MS } ?: false
+
     val xp: Long get() = counters.xp
     val level: LevelInfo get() = Levels.infoFor(counters.xp)
 
@@ -143,6 +151,12 @@ class Folder(val tz: TimeZone) {
     private var streak = StreakTracker()
     private var lastUserActivityAt: Long? = null
     private var lastApplied: Event? = null
+    private val focusBlocks = ArrayList<FocusBlock>()
+    private val effortByDay = HashMap<kotlinx.datetime.LocalDate, Int>()
+
+    /** What each recent completion changed, so `completion.undone` can reverse it exactly (D-1112). */
+    private val undoRecords = LinkedHashMap<String, UndoRecord>()
+    private val undone = HashSet<String>()
 
     /** True when [event] sorts before the last applied event, so the log must be refolded. */
     fun isOutOfOrder(event: Event): Boolean = lastApplied?.let { Event.ORDER.compare(event, it) < 0 } ?: false
@@ -168,6 +182,10 @@ class Folder(val tz: TimeZone) {
         f.streak = streak.copy()
         f.lastUserActivityAt = lastUserActivityAt
         f.lastApplied = lastApplied
+        f.focusBlocks.addAll(focusBlocks)
+        f.effortByDay.putAll(effortByDay)
+        f.undoRecords.putAll(undoRecords)
+        f.undone.addAll(undone)
     }
 
     fun snapshot(): QuestState = QuestState(
@@ -183,6 +201,8 @@ class Folder(val tz: TimeZone) {
         appliedCount = appliedIds.size,
         streakTracker = streak.copy(),
         timeZone = tz,
+        focusBlocks = ArrayList(focusBlocks),
+        undoable = undoRecords.mapValuesTo(LinkedHashMap()) { it.value.ts },
     )
 
     fun apply(event: Event): Outcome {
@@ -216,6 +236,10 @@ class Folder(val tz: TimeZone) {
                 EventTypes.PROPOSAL_ACCEPTED -> tx.proposalDecided(decode(event, ProposalDecided.serializer()), ProposalStatus.ACCEPTED)
                 EventTypes.PROPOSAL_REJECTED -> tx.proposalDecided(decode(event, ProposalDecided.serializer()), ProposalStatus.REJECTED)
                 EventTypes.PROPOSAL_EDITED -> tx.proposalEdited(decode(event, ProposalEdited.serializer()))
+                EventTypes.QUEST_RHYTHM_SET -> tx.questRhythmSet(decode(event, QuestRhythmSet.serializer()))
+                EventTypes.FOCUS_BLOCK_COMPLETED -> tx.focusBlockCompleted(decode(event, FocusBlockCompleted.serializer()))
+                EventTypes.COMPLETION_UNDONE -> tx.completionUndone(decode(event, CompletionUndone.serializer()))
+                EventTypes.FRESH_START -> tx.freshStart(decode(event, FreshStart.serializer()))
                 else -> throw Reject("unknown event type '${event.type}'")
             }
             tx.checkInvariants()
@@ -263,11 +287,18 @@ class Folder(val tz: TimeZone) {
         private val proposalBefore = HashMap<String, Proposal?>()
         private val touchedRoots = LinkedHashSet<String>()
         private val capBefore = cap
-        private var allowFlagFor: String? = null
+        private val countersBefore = counters
+        private val steplessBefore: Set<String> = HashSet(stepless)
+
+        /** Roots that may be left without a step by this event (notification Done, or an undo restoring that state). */
+        private val allowFlags = HashSet<String>()
         private var xp = 0
         private var c = counters
         private var completedDay: Pair<kotlinx.datetime.LocalDate, Int>? = null
         private val lines = ArrayList<HistoryEntry>()
+        private var block: FocusBlock? = null
+        private var undoing: UndoRecord? = null
+        private val recordsUndo = event.type == EventTypes.STEP_COMPLETED || event.type == EventTypes.QUEST_COMPLETED
 
         // ---- primitives -------------------------------------------------------------
 
@@ -284,6 +315,20 @@ class Folder(val tz: TimeZone) {
             if (!stepBefore.containsKey(s.id)) stepBefore[s.id] = steps[s.id]
             steps[s.id] = s
             QuestState.rootOf(quests, s.questId)?.let { touchedRoots += it }
+        }
+
+        fun removeQuest(id: String) {
+            val q = quests[id] ?: return
+            if (!questBefore.containsKey(id)) questBefore[id] = q
+            QuestState.rootOf(quests, id)?.let { touchedRoots += it }
+            quests.remove(id)
+        }
+
+        fun removeStep(id: String) {
+            val s = steps[id] ?: return
+            if (!stepBefore.containsKey(id)) stepBefore[id] = s
+            QuestState.rootOf(quests, s.questId)?.let { touchedRoots += it }
+            steps.remove(id)
         }
 
         fun put(p: Proposal) {
@@ -317,6 +362,23 @@ class Folder(val tz: TimeZone) {
             return t
         }
 
+        private fun cue(raw: String?): String? {
+            val t = raw?.replace(Regex("\\s+"), " ")?.trim()?.ifEmpty { null } ?: return null
+            if (t.length > Limits.MAX_CUE) throw Reject("cue is too long")
+            return t
+        }
+
+        private fun note(raw: String?, what: String): String? {
+            val t = raw?.trim()?.ifEmpty { null } ?: return null
+            if (t.length > Limits.MAX_NOTE) throw Reject("$what is too long")
+            return t
+        }
+
+        private fun rhythm(r: Rhythm): Rhythm {
+            r.problem()?.let { throw Reject("rhythm: $it") }
+            return r.normalized()
+        }
+
         private fun touch(q: Quest) {
             put(q.copy(touchedAt = maxOf(q.touchedAt, ts)))
             q.parentId?.let { quests[it] }?.let { parent -> touch(parent) }
@@ -328,20 +390,20 @@ class Folder(val tz: TimeZone) {
 
         // ---- shared operations -----------------------------------------------------
 
-        private fun setStep(stepId: String, questId: String, rawText: String, dueAt: Long?, alarm: Boolean) {
+        private fun setStep(stepId: String, questId: String, rawText: String, dueAt: Long?, alarm: Boolean, rawCue: String? = null, session: Boolean = false) {
             newId(stepId, steps, "step")
             val q = quest(questId)
             if (!q.status.isOpen) throw Reject("cannot add a step to a finished quest")
             val t = text(rawText)
             q.openStepId?.let { old -> steps[old]?.let { put(it.copy(superseded = true)) } }
-            put(Step(stepId, questId, t, dueAt, alarm, createdAt = ts))
+            put(Step(stepId, questId, t, dueAt, alarm && dueAt != null, createdAt = ts, cue = cue(rawCue)))
             put(quest(questId).copy(openStepId = stepId))
             touch(questId)
-            line(questId, "Next step: $t")
+            line(questId, if (session) "Next session: $t" else "Next step: $t")
         }
 
         private fun applyNext(next: NextStep?) {
-            if (next != null) setStep(next.stepId, next.questId, next.text, next.dueAt, next.alarm)
+            if (next != null) setStep(next.stepId, next.questId, next.text, next.dueAt, next.alarm, next.cue)
         }
 
         private fun advanceFocusFrom(parentId: String, leavingChild: Quest) {
@@ -358,6 +420,7 @@ class Folder(val tz: TimeZone) {
         private fun completeQuest(questId: String) {
             val q = quest(questId)
             if (!q.status.isOpen) throw Reject("quest is already finished")
+            if (q.isPractice) throw Reject("practices never complete; park or drop it instead")
             q.openStepId?.let { old -> steps[old]?.let { put(it.copy(superseded = true)) } }
             put(q.copy(status = QuestStatus.DONE, completedAt = ts, openStepId = null))
             touch(questId)
@@ -385,6 +448,8 @@ class Folder(val tz: TimeZone) {
                 val parent = quest(p.parentId)
                 if (!parent.status.isOpen) throw Reject("cannot add a subquest to a finished quest")
             }
+            if (p.parentId != null && quest(p.parentId).isPractice) throw Reject("practices have no subquests")
+            if (p.rhythm != null && p.parentId != null) throw Reject("only top-level quests can be practices")
             val order = p.order ?: ts.toDouble()
             if (!order.isFinite()) throw Reject("order must be finite")
             put(
@@ -392,7 +457,7 @@ class Folder(val tz: TimeZone) {
                     id = p.questId, title = t, why = p.why?.trim()?.ifEmpty { null },
                     status = if (p.parentId != null) QuestStatus.INBOX else p.status,
                     parentId = p.parentId, order = order, focusedChildId = null,
-                    createdAt = ts, touchedAt = ts,
+                    createdAt = ts, touchedAt = ts, rhythm = p.rhythm?.let(::rhythm),
                 ),
             )
             if (p.parentId != null) {
@@ -408,6 +473,8 @@ class Folder(val tz: TimeZone) {
             var q = quest(p.questId)
             if (p.title != null) q = q.copy(title = title(p.title))
             if (p.clearWhy) q = q.copy(why = null) else if (p.why != null) q = q.copy(why = p.why.trim().ifEmpty { null })
+            if (p.clearObstacle) q = q.copy(obstacle = null) else if (p.obstacle != null) q = q.copy(obstacle = note(p.obstacle, "obstacle"))
+            if (p.clearPlan) q = q.copy(plan = null) else if (p.plan != null) q = q.copy(plan = note(p.plan, "plan"))
             put(q)
             touch(p.questId)
             line(p.questId, "Edited “${q.title}”")
@@ -475,7 +542,7 @@ class Folder(val tz: TimeZone) {
             put(q.copy(order = p.order))
         }
 
-        fun stepSet(p: StepSet) = setStep(p.stepId, p.questId, p.text, p.dueAt, p.alarm)
+        fun stepSet(p: StepSet) = setStep(p.stepId, p.questId, p.text, p.dueAt, p.alarm, p.cue)
 
         fun stepEdited(p: StepEdited) {
             var s = step(p.stepId)
@@ -487,7 +554,8 @@ class Folder(val tz: TimeZone) {
                 s = s.copy(dueAt = p.dueAt, snoozedUntil = null, reminderDismissed = false)
             }
             if (p.alarm != null) s = s.copy(alarm = p.alarm && s.dueAt != null)
-            put(s)
+            if (p.clearCue) s = s.copy(cue = null) else if (p.cue != null) s = s.copy(cue = cue(p.cue))
+            put(s.copy(touchedAt = maxOf(s.touchedAt, ts)))
             touch(s.questId)
             line(s.questId, if (p.dueAt != null || p.clearDue) "Scheduled “${s.text}”" else "Edited step “${s.text}”")
         }
@@ -495,6 +563,8 @@ class Folder(val tz: TimeZone) {
         fun stepCompleted(p: StepCompleted) {
             val s = step(p.stepId)
             if (s.isDone) throw Reject("step already done")
+            val practice = quest(s.questId).takeIf { it.isPractice }
+            if (practice != null && p.finishQuest) throw Reject("practices never complete; park or drop it instead")
             val stamp = p.local?.let { l ->
                 val day = runCatching { kotlinx.datetime.LocalDate.parse(l.day) }.getOrNull()
                 // The local day must be the stamp's own instant seen from some time zone (±1 day of UTC).
@@ -512,10 +582,16 @@ class Folder(val tz: TimeZone) {
             touch(s.questId)
             xp += Xp.STEP
             c = c.copy(stepsDone = c.stepsDone + 1)
-            line(s.questId, "Done: ${s.text}", Xp.STEP)
+            line(s.questId, if (practice != null) "Session: ${s.text}" else "Done: ${s.text}", Xp.STEP)
             if (p.finishQuest) completeQuest(s.questId)
-            if (p.via.mayLeaveQuestWithoutStep) allowFlagFor = QuestState.rootOf(quests, s.questId)
+            if (p.via.mayLeaveQuestWithoutStep) QuestState.rootOf(quests, s.questId)?.let { allowFlags += it }
             applyNext(p.next)
+            // A practice's next session appears by itself, with the same text and cue, on every
+            // path (app, notification, widget, proposal). Its id is derived from the completed
+            // step, so every replica creates the same one.
+            if (practice != null && p.next == null && practice.status.isOpen && quest(practice.id).openStepId == null) {
+                setStep(Ids.derive(s.id, "session"), practice.id, s.text, null, false, s.cue, session = true)
+            }
         }
 
         fun stepSnoozed(p: StepSnoozed) {
@@ -571,6 +647,87 @@ class Folder(val tz: TimeZone) {
             line(ProposalOps.questIdOf(p.payload), "Accepted an edited version of ${prop.client}'s proposal: ${ProposalOps.label(prop.op)}")
         }
 
+        // ---- v1.1 -------------------------------------------------------------------
+
+        fun questRhythmSet(p: QuestRhythmSet) {
+            val q = quest(p.questId)
+            if (!q.isRoot) throw Reject("only top-level quests can be practices")
+            if (!q.status.isOpen) throw Reject("quest is finished")
+            val r = p.rhythm?.let(::rhythm)
+            if (r == q.rhythm) throw Reject("rhythm unchanged")
+            if (r != null && quests.values.any { it.parentId == q.id && it.status.isOpen }) {
+                throw Reject("practices have no subquests; finish or drop them first")
+            }
+            put(q.copy(rhythm = r, focusedChildId = if (r != null) null else q.focusedChildId))
+            touch(p.questId)
+            line(p.questId, if (r == null) "“${q.title}” is a quest again" else if (q.rhythm == null) "“${q.title}” is now a practice" else "Changed the rhythm of “${q.title}”")
+        }
+
+        fun focusBlockCompleted(p: FocusBlockCompleted) {
+            val q = quest(p.questId)
+            val s = step(p.stepId)
+            if (s.questId != q.id) throw Reject("step does not belong to this quest")
+            if (p.minutes < Focus.MIN_MINUTES) throw Reject("a focus block is at least ${Focus.MIN_MINUTES} minutes")
+            if (p.minutes > Focus.MAX_MINUTES) throw Reject("a focus block is at most ${Focus.MAX_MINUTES} minutes")
+            val day = localDay(p.local)
+            val earned = Focus.xpFor((effortByDay[day] ?: 0))
+            xp += earned
+            c = c.copy(focusBlocks = c.focusBlocks + 1, focusMinutes = c.focusMinutes + p.minutes)
+            block = FocusBlock(event.id, q.id, s.id, p.minutes, day, earned, ts)
+            if (!s.isDone) put(s.copy(touchedAt = maxOf(s.touchedAt, ts)))
+            line(q.id, "Focused ${p.minutes} min on “${s.text}”", earned)
+        }
+
+        /**
+         * Reverses a completion exactly (D-1112): every quest and step it changed goes back to
+         * how it was, and its XP, counters, streak day and the achievements they unlocked are
+         * taken back. Refused once anything it changed has changed again.
+         */
+        fun completionUndone(p: CompletionUndone) {
+            val rec = undoRecords[p.eventId]
+                ?: throw Reject(if (p.eventId in undone) "already undone" else "nothing to undo for that event")
+            if (ts - rec.ts > Undo.WINDOW_MS) throw Reject("too late to undo")
+            for ((id, after) in rec.questsAfter) if (quests[id] != after) throw Reject("it changed since, so it can't be undone")
+            for ((id, after) in rec.stepsAfter) if (steps[id] != after) throw Reject("it changed since, so it can't be undone")
+            for ((id, before) in rec.questsBefore) if (before == null) removeQuest(id) else put(before)
+            for ((id, before) in rec.stepsBefore) if (before == null) removeStep(id) else put(before)
+            allowFlags += rec.steplessRoots
+            undoing = rec
+            line(rec.questId, "Undid: ${rec.label}")
+        }
+
+        fun freshStart(p: FreshStart) {
+            val tracked = quests.values.filter { it.status == QuestStatus.TRACKED && it.isRoot }
+            if (p.parkOthers) {
+                val keep = p.keepQuestId?.let { quest(it) } ?: throw Reject("pick the one quest to keep")
+                if (keep.status != QuestStatus.TRACKED || !keep.isRoot) throw Reject("the quest to keep must be tracked")
+            }
+            val trackedIds = tracked.map { it.id }.toSet()
+            for (s in steps.values.toList()) {
+                if (s.isDone || s.superseded) continue
+                val root = QuestState.rootOf(quests, s.questId) ?: continue
+                if (root !in trackedIds || quests[s.questId]?.openStepId != s.id) continue
+                val past = s.dueAt != null && s.dueAt < ts
+                if (s.snoozedUntil == null && !past && !s.reminderDismissed) continue
+                put(
+                    s.copy(
+                        snoozedUntil = null, reminderDismissed = false,
+                        dueAt = if (past) null else s.dueAt, alarm = if (past) false else s.alarm,
+                    ),
+                )
+            }
+            if (p.parkOthers) {
+                for (q in tracked) if (q.id != p.keepQuestId) put(q.copy(status = QuestStatus.LATER))
+            }
+            line(null, "Fresh start")
+        }
+
+        private fun localDay(stamp: LocalStamp?): kotlinx.datetime.LocalDate = stamp?.let { l ->
+            val day = runCatching { kotlinx.datetime.LocalDate.parse(l.day) }.getOrNull()
+            val utcDay = kotlinx.datetime.Instant.fromEpochMilliseconds(l.at).toLocalDateTime(TimeZone.UTC).date
+            day?.takeIf { l.at > 0 && kotlin.math.abs(utcDay.daysUntil(it)) <= 1 }
+        } ?: kotlinx.datetime.Instant.fromEpochMilliseconds(ts).toLocalDateTime(tz).date
+
         // ---- invariants & commit --------------------------------------------------
 
         fun checkInvariants() {
@@ -578,7 +735,7 @@ class Folder(val tz: TimeZone) {
             for (root in touchedRoots) {
                 val q = quests[root] ?: continue
                 val isStepless = q.status == QuestStatus.TRACKED && QuestState.effectiveStepId(quests, root) == null
-                if (isStepless && root !in stepless && root != allowFlagFor) {
+                if (isStepless && root !in stepless && root !in allowFlags) {
                     throw Reject(
                         if (questBefore[root]?.status != QuestStatus.TRACKED && q.status == QuestStatus.TRACKED) {
                             "a quest needs a next step before it can be tracked"
@@ -602,13 +759,45 @@ class Folder(val tz: TimeZone) {
             appliedIds += event.id
             c = c.copy(xp = c.xp + xp)
             completedDay?.let { (day, minute) -> streak.onStep(day, minute) }
+            block?.let { b ->
+                focusBlocks += b
+                effortByDay[b.day] = (effortByDay[b.day] ?: 0) + b.xp
+            }
+            undoing?.let { rec ->
+                // Take back exactly what the completion added; the streak forgets its day.
+                c = c.minus(rec.countersAdded)
+                rec.streakDay?.let { (day, minute) -> streak.onUndo(day, minute) }
+                undoRecords.remove(rec.eventId)
+                undone += rec.eventId
+            }
             c = c.copy(bestStreak = streak.best)
             counters = c
+            // Achievements are a function of the lifetime counters, which only an undo lowers.
+            if (undoing != null) achievements.keys.retainAll { it.isUnlocked(c) }
             for (a in Achievement.entries) {
                 if (a !in achievements && a.isUnlocked(c)) achievements[a] = ts
             }
             history += lines
             if (Actors.isUser(event.actor)) lastUserActivityAt = maxOf(lastUserActivityAt ?: ts, ts)
+            if (recordsUndo) {
+                undoRecords[event.id] = UndoRecord(
+                    eventId = event.id, ts = ts,
+                    questId = lines.firstOrNull { it.xp > 0 }?.questId ?: lines.firstOrNull()?.questId,
+                    label = lines.firstOrNull { it.xp > 0 }?.text ?: event.type,
+                    questsBefore = HashMap(questBefore),
+                    stepsBefore = HashMap(stepBefore),
+                    questsAfter = questBefore.keys.associateWith { quests[it] },
+                    stepsAfter = stepBefore.keys.associateWith { steps[it] },
+                    countersAdded = counters.minus(countersBefore).copy(bestStreak = 0),
+                    streakDay = completedDay,
+                    steplessRoots = touchedRoots.filter { it in steplessBefore }.toSet(),
+                )
+            }
+            // Old completions can no longer be undone; forget what they changed.
+            val it = undoRecords.values.iterator()
+            while (it.hasNext()) {
+                if (ts - it.next().ts > Undo.WINDOW_MS) it.remove() else break
+            }
         }
 
         /** Undo everything this transaction touched (a [Reject] is thrown before [commit]). */
@@ -620,6 +809,56 @@ class Folder(val tz: TimeZone) {
         }
     }
 }
+
+/** One focus block that ran to its end (v1.1). [xp] is the effort XP it earned after the daily cap. */
+data class FocusBlock(
+    val eventId: String,
+    val questId: String,
+    val stepId: String,
+    val minutes: Int,
+    val day: kotlinx.datetime.LocalDate,
+    val xp: Int,
+    val at: Long,
+)
+
+object Undo {
+    /**
+     * How long after a completion the fold still accepts its undo. The app offers Undo for
+     * 10 seconds (5 minutes from a notification); the margin covers sync delays.
+     */
+    const val WINDOW_MS = 60 * 60 * 1000L
+}
+
+/** Everything one completion changed: enough to reverse it exactly (D-1112). */
+internal data class UndoRecord(
+    val eventId: String,
+    val ts: Long,
+    val questId: String?,
+    val label: String,
+    val questsBefore: Map<String, Quest?>,
+    val stepsBefore: Map<String, Step?>,
+    val questsAfter: Map<String, Quest?>,
+    val stepsAfter: Map<String, Step?>,
+    /** Additive counters only (best streak is re-derived from the streak's days). */
+    val countersAdded: Counters,
+    val streakDay: Pair<kotlinx.datetime.LocalDate, Int>?,
+    /** Roots that already showed "Needs next step" before the completion. */
+    val steplessRoots: Set<String>,
+)
+
+/** Field-wise difference of the additive counters (not [Counters.bestStreak]). */
+internal fun Counters.minus(o: Counters) = Counters(
+    stepsDone = stepsDone - o.stepsDone,
+    questsDone = questsDone - o.questsDone,
+    subquestsDone = subquestsDone - o.subquestsDone,
+    inboxSorted = inboxSorted - o.inboxSorted,
+    subquestsCreated = subquestsCreated - o.subquestsCreated,
+    proposalsAccepted = proposalsAccepted - o.proposalsAccepted,
+    bestStreak = bestStreak,
+    xp = xp - o.xp,
+    focusBlocks = focusBlocks - o.focusBlocks,
+    focusMinutes = focusMinutes - o.focusMinutes,
+)
 
 /** Structural checks on an event envelope, shared by the fold, imports and the sync server. */
 object Envelope {

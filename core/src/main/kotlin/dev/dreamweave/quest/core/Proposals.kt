@@ -25,7 +25,7 @@ data class AddQuestPayload(
 )
 
 @Serializable
-data class SetNextStepPayload(val questId: String, val text: String, val dueAt: Long? = null)
+data class SetNextStepPayload(val questId: String, val text: String, val dueAt: Long? = null, val cue: String? = null)
 
 @Serializable
 data class CompleteStepPayload(val questId: String, val stepId: String)
@@ -33,8 +33,23 @@ data class CompleteStepPayload(val questId: String, val stepId: String)
 @Serializable
 data class AddSubquestPayload(val parentId: String, val title: String, val nextStep: String? = null)
 
+/**
+ * [cue]: null leaves the step's cue as it is, an empty string removes it. [keepDue] (v1.1)
+ * leaves the date alone, so a proposal can change only the cue.
+ */
 @Serializable
-data class ScheduleStepPayload(val questId: String, val stepId: String, val dueAt: Long?, val alarm: Boolean? = null)
+data class ScheduleStepPayload(
+    val questId: String,
+    val stepId: String,
+    val dueAt: Long?,
+    val alarm: Boolean? = null,
+    val cue: String? = null,
+    val keepDue: Boolean = false,
+)
+
+/** A new practice (v1.1), with its rhythm and first session. Accepting it puts it in the inbox. */
+@Serializable
+data class AddPracticePayload(val title: String, val rhythm: Rhythm, val firstStep: String, val why: String? = null)
 
 @Serializable
 data class ParkQuestPayload(val questId: String)
@@ -46,6 +61,7 @@ enum class ProposalOp(val wire: String, val label: String) {
     ADD_SUBQUEST("add_subquest", "Add subquest"),
     SCHEDULE_STEP("schedule_step", "Schedule step"),
     PARK_QUEST("park_quest", "Park quest"),
+    ADD_PRACTICE("add_practice", "New practice"),
     ;
 
     companion object {
@@ -67,6 +83,7 @@ object ProposalOps {
         is AddSubquestPayload -> enc(AddSubquestPayload.serializer(), payload)
         is ScheduleStepPayload -> enc(ScheduleStepPayload.serializer(), payload)
         is ParkQuestPayload -> enc(ParkQuestPayload.serializer(), payload)
+        is AddPracticePayload -> enc(AddPracticePayload.serializer(), payload)
         else -> throw IllegalArgumentException("not a proposal payload: ${payload::class}")
     }
 
@@ -79,6 +96,7 @@ object ProposalOps {
             ProposalOp.ADD_SUBQUEST -> AddSubquestPayload.serializer().descriptor
             ProposalOp.SCHEDULE_STEP -> ScheduleStepPayload.serializer().descriptor
             ProposalOp.PARK_QUEST -> ParkQuestPayload.serializer().descriptor
+            ProposalOp.ADD_PRACTICE -> AddPracticePayload.serializer().descriptor
         }
         return (0 until d.elementsCount).joinToString { i -> d.getElementName(i) + if (d.isElementOptional(i)) "?" else "" }
     }
@@ -93,6 +111,7 @@ object ProposalOps {
         ProposalOp.ADD_SUBQUEST -> Events.decode(AddSubquestPayload.serializer(), payload)
         ProposalOp.SCHEDULE_STEP -> Events.decode(ScheduleStepPayload.serializer(), payload)
         ProposalOp.PARK_QUEST -> Events.decode(ParkQuestPayload.serializer(), payload)
+        ProposalOp.ADD_PRACTICE -> Events.decode(AddPracticePayload.serializer(), payload)
         null -> null
     }
 }
@@ -159,6 +178,9 @@ object ProposalRules {
             if (text != null && text.isBlank()) add(ProblemCode.TEXT, "$what must not be empty")
             if (text != null && text.trim().length > max) add(ProblemCode.TEXT, "$what is longer than $max characters")
         }
+        fun checkCue(cue: String?) {
+            if (cue != null && cue.trim().length > Limits.MAX_CUE) add(ProblemCode.TEXT, "cue is longer than ${Limits.MAX_CUE} characters")
+        }
         when (kind) {
             ProposalOp.ADD_QUEST -> {
                 p as AddQuestPayload
@@ -187,6 +209,7 @@ object ProposalRules {
                     )
                 }
                 checkText(p.text, "text", Limits.MAX_TEXT)
+                checkCue(p.cue)
             }
             ProposalOp.COMPLETE_STEP -> {
                 p as CompleteStepPayload
@@ -202,6 +225,7 @@ object ProposalRules {
                 p as AddSubquestPayload
                 val parent = openQuest(p.parentId, "parent quest")
                 if (parent != null && !parent.isRoot) add(ProblemCode.NOT_TOP_LEVEL, "subquests can only be added to top-level quests")
+                if (parent != null && parent.isPractice) add(ProblemCode.PRACTICE, "“${parent.title}” is a practice; practices have no subquests")
                 checkText(p.title, "title", Limits.MAX_TITLE)
                 checkText(p.nextStep, "nextStep", Limits.MAX_TEXT)
             }
@@ -212,6 +236,14 @@ object ProposalRules {
                 if (s == null || s.questId != p.questId || state.quests[p.questId]?.openStepId != p.stepId) {
                     add(ProblemCode.STEP_MISMATCH, "step ${p.stepId} is not the current step of quest ${p.questId}")
                 }
+                if (p.cue != null && p.cue.isNotBlank()) checkCue(p.cue)
+                if (p.keepDue && p.cue == null) add(ProblemCode.MALFORMED, "nothing to change: give due_at, or a cue")
+            }
+            ProposalOp.ADD_PRACTICE -> {
+                p as AddPracticePayload
+                checkText(p.title, "title", Limits.MAX_TITLE)
+                checkText(p.firstStep, "firstStep", Limits.MAX_TEXT)
+                p.rhythm.problem()?.let { add(ProblemCode.RHYTHM, "rhythm: $it") }
             }
             ProposalOp.PARK_QUEST -> {
                 p as ParkQuestPayload
@@ -265,7 +297,8 @@ object ProposalRules {
                 stale = problemList.firstOrNull { it.code != ProblemCode.SLOTS_FULL }?.message,
             )
             is SetNextStepPayload -> ProposalPreview(
-                label, title(p.questId), state.openStep(p.questId)?.text ?: "(no next step)", p.text.trim(), stale = stale,
+                label, title(p.questId), state.openStep(p.questId)?.let { s -> s.text + (s.cue?.let { " · $it" } ?: "") } ?: "(no next step)",
+                p.text.trim() + (p.cue?.trim()?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""), stale = stale,
             )
             is CompleteStepPayload -> ProposalPreview(
                 label, title(p.questId), state.steps[p.stepId]?.text ?: "(missing step)", "Done ✓", stale = stale,
@@ -274,11 +307,25 @@ object ProposalRules {
                 label, title(p.parentId), null,
                 p.title.trim() + (p.nextStep?.let { " — next: ${it.trim()}" } ?: ""), stale = stale,
             )
-            is ScheduleStepPayload -> ProposalPreview(
-                label, title(p.questId),
-                state.steps[p.stepId]?.let { s -> s.text + (s.dueAt?.let { " · due ${formatTs(it)}" } ?: " · no date") },
-                (state.steps[p.stepId]?.text ?: "step") + (p.dueAt?.let { " · due ${formatTs(it)}" } ?: " · no date") +
-                    if (p.alarm == true) " · alarm" else "",
+            is ScheduleStepPayload -> {
+                val s = state.steps[p.stepId]
+                val newDue = if (p.keepDue) s?.dueAt else p.dueAt
+                val newCue = when {
+                    p.cue == null -> s?.cue
+                    p.cue.isBlank() -> null
+                    else -> p.cue.trim()
+                }
+                ProposalPreview(
+                    label, title(p.questId),
+                    s?.let { it.text + (it.dueAt?.let { d -> " · due ${formatTs(d)}" } ?: " · no date") + (it.cue?.let { c -> " · $c" } ?: "") },
+                    (s?.text ?: "step") + (newDue?.let { " · due ${formatTs(it)}" } ?: " · no date") +
+                        (if (p.alarm == true) " · alarm" else "") + (newCue?.let { " · $it" } ?: ""),
+                    stale = stale,
+                )
+            }
+            is AddPracticePayload -> ProposalPreview(
+                label, p.title.trim(), null,
+                "${p.title.trim()} — ${Practices.label(p.rhythm)} — first session: ${p.firstStep.trim()}",
                 stale = stale,
             )
             is ParkQuestPayload -> ProposalPreview(
@@ -333,7 +380,7 @@ object ProposalRules {
                     out += Events.questStatusSet(QuestStatusSet(questId, QuestStatus.TRACKED))
                 }
             }
-            is SetNextStepPayload -> out += Events.stepSet(StepSet(newIdFor("step"), p.questId, p.text, p.dueAt))
+            is SetNextStepPayload -> out += Events.stepSet(StepSet(newIdFor("step"), p.questId, p.text, p.dueAt, cue = p.cue))
             is CompleteStepPayload -> {
                 if (state.steps[p.stepId] == null) throw ProposalException("That step no longer exists.")
                 val plan = Completion.plan(state, p.stepId, decision.finishQuest)
@@ -347,8 +394,20 @@ object ProposalRules {
                 p.nextStep?.trim()?.takeIf { it.isNotEmpty() }?.let { out += Events.stepSet(StepSet(newIdFor("step"), childId, it)) }
             }
             is ScheduleStepPayload -> out += Events.stepEdited(
-                StepEdited(p.stepId, dueAt = p.dueAt, clearDue = p.dueAt == null, alarm = p.alarm),
+                StepEdited(
+                    p.stepId,
+                    dueAt = if (p.keepDue) null else p.dueAt,
+                    clearDue = !p.keepDue && p.dueAt == null,
+                    alarm = p.alarm,
+                    cue = p.cue?.takeIf { it.isNotBlank() },
+                    clearCue = p.cue != null && p.cue.isBlank(),
+                ),
             )
+            is AddPracticePayload -> {
+                val questId = newIdFor("quest")
+                out += Events.questCreated(QuestCreated(questId, p.title, p.why, rhythm = p.rhythm))
+                out += Events.stepSet(StepSet(newIdFor("step"), questId, p.firstStep))
+            }
             is ParkQuestPayload -> out += Events.questStatusSet(QuestStatusSet(p.questId, QuestStatus.LATER))
         }
         out += if (decision.edited != null) Events.proposalEdited(proposalId, payloadJson) else Events.proposalAccepted(proposalId)
@@ -363,7 +422,7 @@ class ProposalException(message: String) : Exception(message)
 
 enum class ProblemCode {
     UNKNOWN_OP, MALFORMED, NOT_FOUND, FINISHED, TEXT, NEEDS_STEP, SLOTS_FULL,
-    FOCUSED_SUBQUEST, NOT_TOP_LEVEL, STEP_MISMATCH, ALREADY, PARK_PENDING,
+    FOCUSED_SUBQUEST, NOT_TOP_LEVEL, STEP_MISMATCH, ALREADY, PARK_PENDING, RHYTHM, PRACTICE,
 }
 
 data class Problem(val code: ProblemCode, val message: String)

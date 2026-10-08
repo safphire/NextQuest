@@ -2,6 +2,7 @@
 package dev.dreamweave.quest.server
 
 import dev.dreamweave.quest.core.Actors
+import dev.dreamweave.quest.core.AddPracticePayload
 import dev.dreamweave.quest.core.AddQuestPayload
 import dev.dreamweave.quest.core.AddSubquestPayload
 import dev.dreamweave.quest.core.CompleteStepPayload
@@ -9,6 +10,9 @@ import dev.dreamweave.quest.core.CoreJson
 import dev.dreamweave.quest.core.Events
 import dev.dreamweave.quest.core.Ids
 import dev.dreamweave.quest.core.ParkQuestPayload
+import dev.dreamweave.quest.core.Practices
+import dev.dreamweave.quest.core.Rhythm
+import dev.dreamweave.quest.core.RhythmKind
 import dev.dreamweave.quest.core.Proposal
 import dev.dreamweave.quest.core.ProposalCreated
 import dev.dreamweave.quest.core.ProposalOp
@@ -32,6 +36,7 @@ import dev.dreamweave.quest.protocol.ListQuestsInput
 import dev.dreamweave.quest.protocol.ProposalCreatedDto
 import dev.dreamweave.quest.protocol.ProposalDto
 import dev.dreamweave.quest.protocol.ProposalListDto
+import dev.dreamweave.quest.protocol.ProposeAddPracticeInput
 import dev.dreamweave.quest.protocol.ProposeAddQuestInput
 import dev.dreamweave.quest.protocol.ProposeAddSubquestInput
 import dev.dreamweave.quest.protocol.ProposeCompleteStepInput
@@ -40,6 +45,9 @@ import dev.dreamweave.quest.protocol.ProposeScheduleStepInput
 import dev.dreamweave.quest.protocol.ProposeSetNextStepInput
 import dev.dreamweave.quest.protocol.QuestDto
 import dev.dreamweave.quest.protocol.QuestListDto
+import dev.dreamweave.quest.protocol.RhythmDto
+import dev.dreamweave.quest.protocol.RhythmKindDto
+import dev.dreamweave.quest.protocol.WeekDto
 import dev.dreamweave.quest.protocol.StatsDto
 import dev.dreamweave.quest.protocol.StepDto
 import dev.dreamweave.quest.protocol.SubquestDto
@@ -80,7 +88,7 @@ class McpTools(private val store: EventStore, private val config: Config, privat
                 propose(grant, ProposalOp.ADD_QUEST, AddQuestPayload(i.title, i.why, i.nextStep, i.dueAt?.let(::parseTime), i.track), i.reason)
             }
             McpToolSpecs.PROPOSE_SET_NEXT_STEP.name -> decode(ProposeSetNextStepInput.serializer(), args).let { i ->
-                propose(grant, ProposalOp.SET_NEXT_STEP, SetNextStepPayload(i.questId, i.text, i.dueAt?.let(::parseTime)), i.reason)
+                propose(grant, ProposalOp.SET_NEXT_STEP, SetNextStepPayload(i.questId, i.text, i.dueAt?.let(::parseTime), i.cue?.trim()?.ifEmpty { null }), i.reason)
             }
             McpToolSpecs.PROPOSE_COMPLETE_STEP.name -> decode(ProposeCompleteStepInput.serializer(), args).let { i ->
                 val step = resolveStep(grant, i.questId, i.stepId, "complete")
@@ -91,10 +99,15 @@ class McpTools(private val store: EventStore, private val config: Config, privat
             }
             McpToolSpecs.PROPOSE_SCHEDULE_STEP.name -> decode(ProposeScheduleStepInput.serializer(), args).let { i ->
                 val step = resolveStep(grant, i.questId, i.stepId, "schedule")
-                propose(grant, ProposalOp.SCHEDULE_STEP, ScheduleStepPayload(step.questId, step.id, i.dueAt?.let(::parseTime), i.alarm), i.reason)
+                // With a cue and no due_at, only the cue changes (before v1.1 a missing due_at meant "remove the date").
+                val keepDue = i.cue != null && !args.containsKey("due_at")
+                propose(grant, ProposalOp.SCHEDULE_STEP, ScheduleStepPayload(step.questId, step.id, i.dueAt?.let(::parseTime), i.alarm, i.cue, keepDue), i.reason)
             }
             McpToolSpecs.PROPOSE_PARK_QUEST.name -> decode(ProposeParkQuestInput.serializer(), args).let { i ->
                 propose(grant, ProposalOp.PARK_QUEST, ParkQuestPayload(i.questId), i.reason)
+            }
+            McpToolSpecs.PROPOSE_ADD_PRACTICE.name -> decode(ProposeAddPracticeInput.serializer(), args).let { i ->
+                propose(grant, ProposalOp.ADD_PRACTICE, AddPracticePayload(i.title, rhythmOf(i.rhythm), i.firstStep, i.why), i.reason)
             }
             else -> ToolResult.Error("unknown tool '$name'")
         }
@@ -130,11 +143,46 @@ class McpTools(private val store: EventStore, private val config: Config, privat
 
     // ---- mapping ---------------------------------------------------------------------------
 
-    private fun stepDto(s: Step?) = s?.let { StepDto(it.id, it.text, it.dueAt?.let(::iso), it.alarm, it.isDone, it.questId) }
+    private fun stepDto(s: Step?) = s?.let { StepDto(it.id, it.text, it.dueAt?.let(::iso), it.alarm, it.isDone, it.questId, it.cue) }
+
+    private val dayNames = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+    private fun rhythmDto(r: Rhythm) = RhythmDto(
+        kind = when (r.kind) {
+            RhythmKind.DAILY -> RhythmKindDto.DAILY
+            RhythmKind.WEEKDAYS -> RhythmKindDto.WEEKDAYS
+            RhythmKind.PER_WEEK -> RhythmKindDto.PER_WEEK
+        },
+        days = r.days.takeIf { it.isNotEmpty() }?.map { dayNames[it - 1] },
+        times = r.times.takeIf { r.kind == RhythmKind.PER_WEEK },
+        reminder = r.reminderMinute?.let { "%02d:%02d".format(it / 60, it % 60) },
+        label = Practices.label(r),
+    )
+
+    /** The wire rhythm as a core [Rhythm]; the core rules validate the values. */
+    private fun rhythmOf(d: RhythmDto): Rhythm {
+        val days = d.days.orEmpty().map { name ->
+            val i = dayNames.indexOf(name.trim().lowercase().take(3))
+            if (i < 0) throw BadInput("rhythm.days must be mon, tue, wed, thu, fri, sat or sun (got '$name')")
+            i + 1
+        }
+        val reminder = d.reminder?.let { t ->
+            val m = Regex("^(\\d{1,2}):(\\d{2})$").find(t.trim()) ?: throw BadInput("rhythm.reminder must be HH:MM (got '$t')")
+            val (h, min) = m.destructured
+            if (h.toInt() > 23 || min.toInt() > 59) throw BadInput("rhythm.reminder must be HH:MM (got '$t')")
+            h.toInt() * 60 + min.toInt()
+        }
+        return when (d.kind) {
+            RhythmKindDto.DAILY -> Rhythm(RhythmKind.DAILY, reminderMinute = reminder)
+            RhythmKindDto.WEEKDAYS -> Rhythm(RhythmKind.WEEKDAYS, days = days, reminderMinute = reminder)
+            RhythmKindDto.PER_WEEK -> Rhythm(RhythmKind.PER_WEEK, times = d.times ?: throw BadInput("rhythm.times is required for per_week"), reminderMinute = reminder)
+        }
+    }
 
     private fun questDto(state: QuestState, q: Quest): QuestDto {
         val kids = state.children(q.id).filter { it.status != QuestStatus.DROPPED }
         val progress = Views.progress(state, q.id)
+        val practice = Practices.status(state, q, Instant.fromEpochMilliseconds(clock()).toLocalDateTime(tz).date)
         return QuestDto(
             id = q.id, title = q.title, why = q.why, status = q.status.name.lowercase(), parentId = q.parentId,
             nextStep = stepDto(if (q.isRoot) state.effectiveStep(q.id) else state.openStep(q.id)),
@@ -142,6 +190,11 @@ class McpTools(private val store: EventStore, private val config: Config, privat
             subquestsDone = progress.done, subquestsTotal = progress.total,
             subquests = kids.map { c -> SubquestDto(c.id, c.title, c.status.name.lowercase(), q.focusedChildId == c.id, stepDto(state.openStep(c.id))) },
             createdAt = iso(q.createdAt), touchedAt = iso(q.touchedAt),
+            kind = if (q.isPractice) "practice" else "quest",
+            rhythm = q.rhythm?.let(::rhythmDto),
+            thisWeek = practice?.let { WeekDto(it.week.done, it.week.target) },
+            nextSessionOn = practice?.nextSessionDay?.toString(),
+            obstacle = q.obstacle, plan = q.plan,
         )
     }
 

@@ -55,10 +55,17 @@ object EventTypes {
     const val PROPOSAL_REJECTED = "proposal.rejected"
     const val PROPOSAL_EDITED = "proposal.edited"
 
+    // v1.1
+    const val QUEST_RHYTHM_SET = "quest.rhythm_set"
+    const val FOCUS_BLOCK_COMPLETED = "focus.block_completed"
+    const val COMPLETION_UNDONE = "completion.undone"
+    const val FRESH_START = "reset.fresh_start"
+
     val ALL = setOf(
         QUEST_CREATED, QUEST_EDITED, QUEST_STATUS_SET, QUEST_COMPLETED, QUEST_FOCUS_SET, QUEST_REORDERED,
         STEP_SET, STEP_EDITED, STEP_COMPLETED, STEP_SNOOZED, STEP_REMINDER_DISMISSED, SLOT_CAP_SET,
         PROPOSAL_CREATED, PROPOSAL_ACCEPTED, PROPOSAL_REJECTED, PROPOSAL_EDITED,
+        QUEST_RHYTHM_SET, FOCUS_BLOCK_COMPLETED, COMPLETION_UNDONE, FRESH_START,
     )
 }
 

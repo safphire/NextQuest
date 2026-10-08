@@ -17,6 +17,13 @@
             ],
             "description": "Optional ISO-8601 date-time, e.g. 2026-10-02T09:00 (server time zone) or with an offset."
         },
+        "cue": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Optional if-then cue: when or where the step happens, e.g. \"after lunch, at my desk\" (at most 200 characters)."
+        },
         "reason": {
             "type": "string",
             "description": "Why you suggest this, in one or two sentences. Shown to the user next to the proposal."
