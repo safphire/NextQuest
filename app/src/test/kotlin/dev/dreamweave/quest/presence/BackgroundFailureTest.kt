@@ -69,7 +69,7 @@ class BackgroundFailureTest {
     }
 
     @Test
-    fun alarmSnoozeDismissAndDone_failQuietly() = runBlocking {
+    fun alarmSnoozeDismissAndDone_failQuietly() = runBlocking<Unit> {
         val (actions, repo, step) = seeded()
         val before = repo.current()
 
@@ -88,7 +88,7 @@ class BackgroundFailureTest {
     }
 
     @Test
-    fun widgetDone_failsQuietly() = runBlocking {
+    fun widgetDone_failsQuietly() = runBlocking<Unit> {
         val (actions, repo, step) = seeded()
         val r = Calm.commit("test", "widget Done") { actions.completeStepFromWidget(step, "Stretch", finishOwner = false) }
         assertIs<ActionOutcome.Failed>(r)
@@ -96,20 +96,20 @@ class BackgroundFailureTest {
     }
 
     @Test
-    fun refusalsStayRefusals_notFailures() = runBlocking {
+    fun refusalsStayRefusals_notFailures() = runBlocking<Unit> {
         val (actions, _, _) = seeded()
         val r = Calm.commit("test", "alarm Done") { actions.completeStep(Ids.newId(now), null, finishOwner = false) }
         assertIs<ActionOutcome.Refused>(r)
     }
 
     @Test
-    fun syncQueueCount_failsQuietly() = runBlocking {
+    fun syncQueueCount_failsQuietly() = runBlocking<Unit> {
         val (_, repo, _) = seeded()
         assertNull(SyncStatus.pendingCount(repo))
     }
 
     @Test
-    fun aLoadFailure_isCaughtToo() = runBlocking {
+    fun aLoadFailure_isCaughtToo() = runBlocking<Unit> {
         val broken = object : EventDao by BrokenDao(emptyList()) {
             override suspend fun all(): List<EventEntity> = throw SQLiteFullException("unreadable")
         }
