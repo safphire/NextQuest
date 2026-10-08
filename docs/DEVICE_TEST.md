@@ -140,3 +140,56 @@ For sync and AI, you need a server reachable over HTTPS (README, "Self-hosting")
 - [ ] **Restore gap:** sync, turn on airplane mode right after a capture's upload
       starts (or stop the server mid-sync), restore the server's data volume from a
       backup taken before that capture, start it, sync: the capture reaches the server.
+
+## 11. v1.1 — practices, undo, focus, reset, coming back
+- [ ] **Practice:** capture "Singing" with **Practice** on, pick Mon / Wed / Fri; track
+      it with "20 min scales". It uses a slot. On a session day the card shows
+      "This week 0/3" and Done; Done logs +15 XP and the card rests ("Session logged
+      for today. Next session …"). No "What's next?" sheet appears.
+- [ ] **Practice reminders on weekdays:** give the practice a reminder 2 minutes
+      ahead (Quest detail → ⋮ → Change rhythm → Reminder) on a session day: it
+      arrives with Done / Snooze 1h / Skip. Skip, then check the next session day:
+      the reminder comes back. On a non-session day nothing fires.
+- [ ] Leave the practice alone for a week: no backlog, no red, no count of missed
+      sessions; only "This week 0/3" resets on Monday.
+- [ ] **Undo in the app:** Done on a step → "What's next?" → set it. An Undo bar
+      shows for 10 s; Undo restores the step, the XP and the streak (Trophies). Same
+      for completing a subquest, a quest (the celebration, then Undo) and a practice
+      session. The quest's history shows both the completion and "Undid: …".
+- [ ] **Undo from a notification:** Done on a step reminder. A silent "Done · step"
+      notification with Undo appears; Undo puts the step back. Without Undo, the
+      confirmation disappears after 5 minutes.
+- [ ] **Focus timer with the screen off:** Focus on a card → 10 min → Start. Lock
+      the phone and leave it (ideally long enough for Doze; or
+      `adb shell dumpsys deviceidle force-idle`). At the end, a chime and "Did you
+      finish the step?" arrive on time. Done opens "What's next?"; Keep going starts
+      another block; Not yet closes it. Trophies shows the focus minutes.
+- [ ] Focus: background the app mid-block: the shade shows the time left with Pause
+      and Stop, and both work. Stop says nothing negative and gives no XP. Twelve
+      blocks in a day give 60 XP; the next block says today's focus XP is full.
+- [ ] **Stuck?:** set the device date 3 days ahead (or the setting to 2 days): the
+      card shows "Stuck?". Each option works: Shrink, Focus 10 min, Park it, Ask
+      Claude (the share sheet opens with the prompt).
+- [ ] **Ask AI, paired and not:** share to Claude from Quest detail. Unpaired, paste
+      the numbered reply into capture: "Save N items to inbox" saves one per line.
+      Paired, Claude's `propose_add_subquest` proposals arrive in Proposals.
+- [ ] **Breathe haptics:** Reset → Breathe → 3 min → Start, then turn the screen off.
+      A tap at each inhale, two light taps for the top-up, a long soft hum for the
+      exhale continue to the end, then a short double tap. With the screen on, the
+      words and the count match the shape. TalkBack reads the phase and the count.
+- [ ] **Shrink and Fresh start:** Reset → Shrink a step: the current step is shown,
+      the new text replaces it. Reset → Fresh start with "Park all but one": snoozes
+      and past dates are cleared, the others are parked, XP and streak unchanged.
+- [ ] **Coming back:** with the date moved to a Monday (or after 2+ days), the first
+      open shows the resume card with Fresh start. Dismiss it twice on two such
+      days: it isn't offered again for 30 days.
+- [ ] **Forgiveness:** do a step on day 1, nothing on day 2, open on day 3: one calm
+      line with Set step / Dismiss; it never mentions the streak. Trophies shows the
+      best streak.
+- [ ] **When/where:** in "What's next?", tap the time chip and pick a time, and
+      "after ___": the card shows the cue under the step, the calendar and the
+      digest show it, and the reminder arrives at that time today.
+- [ ] **Obstacle and plan:** Quest detail → Obstacle and plan: both save, show in the
+      vault note, and Claude's `get_quest` returns them.
+- [ ] **Accessibility:** TalkBack announces Reset, Focus (with the step), Stuck? and
+      the Breathe guide; the focus time left is read out.

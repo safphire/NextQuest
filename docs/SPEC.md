@@ -267,3 +267,194 @@ reschedule, widget, share target, pairing, Claude and ChatGPT connector setup).
 
 Finish with a PR description that lists: what shipped per phase, known issues, decisions
 made (link DECISIONS.md), review results, and the device test checklist.
+
+---
+
+# v1.1 brief — fixes, essentials, and the focus layer
+
+v1.1 was built against the brief below, kept verbatim like the v1 brief above. Every v1
+rule still holds. Decisions made where it was ambiguous are D-1101 onward in
+[DECISIONS.md](DECISIONS.md); reviews are in [REVIEW.md](REVIEW.md).
+
+## Product intent for v1.1
+
+The user procrastinates by generating ideas and losing track; v1 fixed losing track.
+v1.1 targets **starting** and **returning**: make the first minute of work easy, reward
+effort itself, and make coming back after a slip feel clean instead of guilty.
+
+Evidence the design rests on (keep the copy and mechanics faithful to it):
+- Procrastination is short-term mood repair, not laziness → lower the aversiveness of
+  starting; never shame.
+- Rewarding effort makes effort itself rewarding (learned industriousness) → XP for
+  focused time on a step, not only for completion.
+- Expected, controlling rewards erode intrinsic motivation; informational feedback helps
+  → XP and stats are framed as feedback, never payment or punishment. No penalties.
+- If-then plans ("when X, I will Y") are among the strongest goal interventions → a
+  "when/where" cue on each step.
+- Mental contrasting (wish → obstacle → plan) → an optional obstacle + plan on a quest.
+- Self-forgiveness after procrastinating reduces later procrastination → forgive first,
+  ask for the next step second.
+- Fresh-start effect: temporal landmarks motivate new starts → offer clean restarts.
+- Habits take a median ~66 days and one missed day barely matters → say so after a miss.
+- Cyclic sighing (two inhales, long exhale) for ~5 minutes improved mood more than
+  mindfulness in a 28-day trial → the Breathe reset.
+
+**No bloat.** If a feature starts needing settings screens, onboarding, or more than one
+new tab, stop and find the smaller version. Nothing adds a bottom-nav tab.
+
+## Phase A — Fix round (from REVIEW.md known issues and device testing)
+
+1. **Stable debug signing.** CI debug APKs must be signed with one persistent debug
+   key so updates install over each other without data loss. Generate a dedicated debug
+   keystore, store it base64-encoded in a GitHub Actions secret (`DEBUG_KEYSTORE_B64`
+   plus password secrets), decode it in CI, and use it for `debug`. Never commit any
+   keystore. Document the one-time secret setup for the maintainer in
+   `docs/RELEASING.md`; if the secret is absent, CI falls back to the default debug key
+   and prints a loud warning in the job summary.
+2. **Alarm Back button.** Back on the full-screen alarm must stop the ringing and leave a
+   normal (silent) reminder notification with Done / Snooze / Skip.
+3. **Server-restore gap.** The phone remembers the highest server cursor its pushes
+   reached and detects a restore that lands between its last pull and later pushes, then
+   re-sends. Integration test required.
+4. **Background crash paths.** Alarm-screen actions, widget-dialog actions and the sync
+   queue count must catch failures and fail quietly with a calm message or log, never
+   crash. Add tests that inject failures.
+5. **Rotation.** Open dialogs and sheets (capture, next step, track, swap) survive
+   rotation and process death with their typed text.
+6. **LAN testing.** Debug builds allow cleartext HTTP so the maintainer can pair with a
+   server on the local network; release builds require HTTPS. Show the active mode in
+   Settings → Sync.
+
+## Phase B — Essentials the app is missing
+
+Compared against TickTick, Todoist, Structured, Tiimo, Llama Life, Amazing Marvin and
+Goblin Tools, these are the only gaps that matter for this product. Do not add
+timelines, Kanban, Eisenhower views, routines libraries, mascots, or auto-rescheduling.
+
+### B1. Practices (recurring quests)
+Many of the user's goals are ongoing practices (singing, drawing, study) that never
+"finish". Add a quest kind `PRACTICE`:
+- Created from capture or Board like any quest; the user picks a rhythm:
+  daily, chosen weekdays, or N times per week.
+- A tracked practice always shows its next session as its step (text editable, e.g.
+  "20 min scales"). Done logs a session (+15 XP) and the next session appears on the
+  next due day. Practices never complete; the user can park or drop them.
+- Practices count against the slot cap (one thing visible still holds).
+- **Missed sessions never pile up.** No backlog, no overdue count. The card shows
+  "this week 2/4" as informational feedback only.
+- Reminders, digest, widget, calendar and vault export all understand practices.
+- MCP: `list_quests` / `get_quest` expose kind and rhythm; add
+  `propose_add_practice(title, rhythm, firstStep, reason)`.
+
+### B2. Undo a completion
+- After Done (step, subquest, quest, or practice session), show a 10-second snackbar
+  with **Undo**. Undo is a compensating event in `:core` that reverses XP, streak,
+  achievements and focus exactly; recomputing from scratch must equal the incremental
+  result (property test).
+- A notification Done posts a silent "Done · Undo" confirmation that expires after
+  5 minutes.
+- History shows the completion and its undo; nothing is silently deleted.
+
+### B3. Focus timer (and effort XP)
+- A **Focus** button on each Today card and on Quest detail starts a countdown on that
+  step: presets 10 / 25 / 50 minutes (default 25, remembered).
+- Runs as a foreground service with an ongoing notification (time left, Pause, Stop).
+  Full-screen focus view: the step text, the time left, nothing else.
+- At the end: gentle chime + "Did you finish the step?" → Done (normal flow, including
+  "What's next?"), **Keep going** (another block), or **Not yet** (no judgment).
+- **Effort XP:** +5 XP per completed block of ≥10 minutes, capped at 60 XP per day so it
+  can't be farmed. Stopping early credits nothing and says nothing negative.
+- Event `focus.block_completed` (questId, stepId, minutes). Lifetime focus minutes on
+  Trophies. Add achievements: first focus block; 10 hours focused.
+
+### B4. "Stuck?" nudge (stall detection without guilt)
+- A tracked quest whose step hasn't been touched for 3 days (setting: 2–7) shows a small
+  neutral **Stuck?** chip on its card. No red, no counts, no "overdue".
+- Tapping it offers: **Shrink** (rewrite as a 2-minute version), **Focus 10 min**,
+  **Park it**, or **Ask Claude to break it down** (B5).
+- The morning digest mentions at most one stuck quest.
+
+### B5. Ask Claude / ChatGPT to break a quest down
+- On Quest detail and the Stuck sheet: **Ask AI to break this down** opens the Android
+  share sheet with a ready prompt containing the quest title, why, obstacle, current
+  step and subquests, asking for 3–7 small concrete subquests, the first doable in under
+  10 minutes.
+- If a sync server is paired, the prompt also tells the assistant to submit them with
+  `propose_add_subquest` so they arrive in Proposals; otherwise the user pastes the reply
+  into capture, where each line becomes an Inbox item.
+- No API keys, no in-app AI calls.
+
+## Phase C — The focus layer (research-backed)
+
+### C1. Reset button
+A **Reset** button in the Today header opens a sheet with three choices:
+- **Breathe:** guided cyclic sighing — two inhales, one long exhale — for 1, 3 or
+  5 minutes. A slow expanding/contracting shape and haptic cues; works with the screen
+  off via haptics. No XP (rewards stay tied to work). Copy: one line on why it works.
+- **Shrink:** pick a tracked quest and rewrite its step as a 2-minute version, with the
+  current step shown above for reference.
+- **Fresh start:** "Clean slate. Nothing you missed carries forward." Clears snoozes and
+  past due times on tracked steps (they become undated), optionally parks all but the one
+  quest the user picks, and logs `reset.fresh_start`. XP, level, achievements and best
+  streak are untouched.
+
+### C2. Automatic fresh-start moments
+On the first open after 2+ days away, and on the first open of a week (Monday) or month,
+the resume card offers **Fresh start** alongside "pick up where you left off". Respect
+the user's dismissals: if dismissed twice in a row, stop offering it for 30 days.
+
+### C3. When/where cues (if-then plans)
+- Steps get an optional `cue` ("after lunch, at my desk"). The "What's next?" sheet asks
+  **When/where?** with quick chips (a time, "after ___", "at ___") and a free-text field.
+  A time cue sets `dueAt` as today; a text-only cue just displays.
+- Cards show the cue under the step. Calendar and digest show it too.
+- MCP: cue readable and settable via `propose_set_next_step` / `propose_schedule_step`.
+
+### C4. Obstacle and plan (mental contrasting)
+- Quests get two optional fields on Quest detail: **What's in the way?** and
+  **If that happens, I will…**. Shown collapsed under "Why it matters".
+- Included in the vault export, the AI breakdown prompt (B5), and MCP `get_quest`.
+
+### C5. Forgiveness after a miss
+- When a day passes with no step done, the next open shows one calm line on Today, e.g.
+  "Yesterday didn't happen. That's normal — one missed day barely affects a habit.
+  What's one small step now?" with **Set step** / **Dismiss**. Rotate between 3–4
+  variants; never mention streak loss.
+- If the streak breaks, Trophies keeps and highlights the best streak.
+- Write all copy to a single strings file section so it can be reviewed in one place.
+  Banned words in user-facing copy: overdue, failed, missed (except in C5's line),
+  lazy, behind, again.
+
+## Phase D — Polish, docs, and review
+
+- Update `README.md` (features, screenshots placeholders), `docs/MCP_TOOLS.md`,
+  `docs/SPEC.md` (append a v1.1 section), and `docs/DEVICE_TEST.md` with checks for
+  every new feature: signing (install update over previous build without data loss),
+  focus timer with screen off, Breathe haptics, practice reminders on weekdays, Undo from
+  a notification, LAN pairing over HTTP in debug.
+- Accessibility: TalkBack labels on Reset, Focus, Stuck, Breathe; Breathe must not rely
+  on animation alone (haptics + text count).
+
+## Critique mechanism and acceptance highlights
+
+After each phase: build, test and lint green → self-check against the acceptance list →
+an independent reviewer subagent that has not seen the work grades each item PASS/FAIL
+with evidence → fix every FAIL and high-severity issue → up to 3 rounds → log to
+`docs/REVIEW.md`. Finish with one fresh full review across all phases.
+
+- A CI debug APK installs over the previous CI debug APK with data intact (when the
+  secret is set).
+- Undo of any completion restores exactly the prior XP, streak, achievements and focus;
+  a fold from scratch matches.
+- Practices never create a backlog; missing a week of a practice changes nothing but
+  "this week x/N".
+- The slot cap still can't be exceeded by any path, including practices, Fresh start,
+  imports, sync and MCP.
+- No MCP tool mutates state without a user acceptance event (including the new
+  practice, cue and obstacle fields).
+- Effort XP can't exceed 60/day; stopping a focus block early grants nothing and shows no
+  negative copy.
+- No banned word appears in user-facing strings (add a unit test that scans them).
+- Breathe works with the screen off; the focus timer survives app backgrounding and
+  doze.
+- Every Phase A known issue is closed with a test or a DEVICE_TEST entry.

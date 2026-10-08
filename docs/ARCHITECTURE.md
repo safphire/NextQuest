@@ -64,6 +64,20 @@ The only stored truth is an append-only log of events:
 | `proposal.created` | `proposalId, source, client, op, payload, reason?` | **only** from `mcp:*` actors. |
 | `proposal.accepted` / `rejected` / `edited` | `proposalId` (+ `payload` for edited) | only from `user`; proposal must be pending. |
 
+v1.1 events (D-1110 to D-1121):
+
+| Type | Payload | Rules |
+|---|---|---|
+| `quest.rhythm_set` | `questId, rhythm?` | top-level and open; no open subquests. A rhythm makes it a practice; null makes it a plain quest. |
+| `focus.block_completed` | `questId, stepId, minutes, local` | step belongs to the quest; 10–240 minutes. +5 XP, at most 60 effort XP per local day. |
+| `completion.undone` | `eventId` | a `step.completed` / `quest.completed` from the last hour whose changes are untouched since; reverses it exactly. |
+| `reset.fresh_start` | `keepQuestId?, parkOthers` | clears snoozes and past due times on tracked steps; with `parkOthers`, parks all tracked quests but one. |
+
+`quest.created` takes an optional `rhythm`; `quest.edited` takes `obstacle`/`plan`
+(and `clear…`); `step.set`, `step.edited` and the `next` of a completion take a `cue`.
+A completed practice session makes the fold create the next one (id derived from the
+completed step). Practices refuse `quest.completed` and `finishQuest`.
+
 Before the type-specific rules, every envelope is checked: UUIDv7 event and
 device ids, `seq` ≥ 1, `ts` > 0, no reused `(deviceId, seq)`.
 
@@ -101,6 +115,7 @@ the next step after a completion and whether the user must type one.
 | Step done | +15 |
 | Subquest done | +40 |
 | Quest done | +100 |
+| Focus block (≥ 10 min, run to its end) | +5, at most 60 a day |
 
 There are no penalties and XP never decreases.
 
@@ -127,7 +142,7 @@ check the fold's incremental bookkeeping.
 
 **Achievements.** First step · 10 / 50 steps · first / 5 quests · 3 / 7-day
 streak · level 5 · 10 inbox items sorted · first subquest · 10 subquests done ·
-first accepted proposal. Each records the timestamp of the event that unlocked it.
+first accepted proposal · first focus block · 10 hours focused. Each records the timestamp of the event that unlocked it.
 
 ## Proposals (AI proposes, the user ratifies)
 

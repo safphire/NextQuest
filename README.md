@@ -7,6 +7,9 @@ each quest. An optional self-hosted sync + MCP server lets Claude or ChatGPT
 read your quests and **propose** changes, which you approve in the app.
 
 > Screenshots: *(placeholder: Today, Board, Quest, Proposals, widget)*
+>
+> v1.1 screenshots: *(placeholder: Reset sheet with Breathe, focus timer, a practice
+> card with "this week 2/4", Stuck? sheet, What's next with When/where?)*
 
 ## Principles
 
@@ -37,7 +40,20 @@ These decide every judgment call:
 | **Presence** | Morning digest, streak guard, step reminders and alarms (they survive reboot), home-screen widget. |
 | **Durability** | Mirror into an Obsidian/Syncthing folder as Markdown, daily snapshots, export/import. |
 
-Game rules: a step is +15 XP, a subquest +40, a quest +100. Each level needs
+### New in v1.1: starting and returning
+
+| | |
+|---|---|
+| **Practices** | Ongoing quests with a rhythm (daily, chosen days, or N a week): singing, drawing, study. Each session is the step; the next one appears by itself. They never complete and never pile up: the card only says "this week 2/4". |
+| **Undo** | 10 seconds to undo any completion in the app, 5 minutes from a notification. XP, streak, achievements and focus go back exactly. |
+| **Focus timer** | 10 / 25 / 50 minutes on one step, full screen or in the shade. +5 XP for every block you finish (at most 60 a day), so effort itself counts. Stopping early is fine. |
+| **Stuck?** | A step untouched for a few days gets a quiet chip: shrink it, focus 10 minutes, park it, or ask Claude or ChatGPT to break it down (share sheet, no API key). |
+| **Reset** | Breathe (cyclic sighing, guided by haptics even with the screen off), Shrink a step to 2 minutes, or a Fresh start: nothing you missed carries forward. |
+| **When/where** | An if-then cue on each step ("after lunch, at my desk"), and an obstacle + plan on each quest. |
+| **Coming back** | After time away, a new week or a new month: pick up where you left off, or start clean. After a day without a step, one kind line, never about the streak. |
+
+Game rules: a step (or practice session) is +15 XP, a subquest +40, a quest +100,
+a finished focus block +5 (60 a day at most). Each level needs
 about 1.25× the XP of the previous one. The streak counts days with at least
 one completed step. Missing a single day is forgiven if you finish a step
 before noon on the next day.
@@ -53,7 +69,9 @@ Requirements: JDK 21 and the Android SDK (compileSdk 35).
 ```
 
 CI builds a debug APK on every push. You can download it from the workflow
-run's artifacts.
+run's artifacts. With the one-time secret setup in
+[docs/RELEASING.md](docs/RELEASING.md), each CI APK installs over the previous one
+and keeps your data.
 
 ## Self-hosting the sync + AI server
 
@@ -68,7 +86,9 @@ curl http://localhost:8080/health
 
 - Put it behind **HTTPS** before connecting phones or AI clients. Use any
   reverse proxy (Caddy, Traefik, nginx) or a tunnel, and set `PUBLIC_URL` to
-  the public `https://` address. The app only pairs over HTTPS.
+  the public `https://` address. Release builds of the app only pair over HTTPS;
+  debug builds also accept `http://` for testing on a local network
+  ([RELEASING](docs/RELEASING.md)).
 - Data lives in the `quest-data` volume (`/data/quest.db`). Back it up like
   any SQLite file. Every phone also keeps the full log.
 - The server always listens on port 8080 inside the container;
@@ -117,6 +137,8 @@ until you accept it. The tools and their limits are in
 - [DECISIONS](docs/DECISIONS.md): every judgment call, with reasons.
 - [REVIEW](docs/REVIEW.md): independent review results per phase.
 - [DEVICE_TEST](docs/DEVICE_TEST.md): the on-device checklist for what CI can't prove.
+- [RELEASING](docs/RELEASING.md): stable debug signing, release signing, network security.
+- [SPEC](docs/SPEC.md): the v1 and v1.1 briefs.
 
 ## Roadmap
 

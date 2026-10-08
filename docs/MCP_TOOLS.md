@@ -28,8 +28,8 @@ Schemas are in [`/schema`](../schema) and in `tools/list`.
 | Tool | Input | Returns |
 |---|---|---|
 | `get_today` | — | Date, tracked quests (each with its one next step), slots used / cap, streak, level, XP, pending proposal count. **Start here.** |
-| `list_quests` | `status?`: `inbox`, `tracked`, `later`, `done`, `dropped` | Quests with that status; without a status, all open quests. |
-| `get_quest` | `quest_id` | One quest: why, status, next step (or `needs_next_step`), subquests with progress, and the ids proposals need. |
+| `list_quests` | `status?`: `inbox`, `tracked`, `later`, `done`, `dropped` | Quests with that status; without a status, all open quests. Each has a `kind`: `quest` or `practice`. |
+| `get_quest` | `quest_id` | One quest: why, `obstacle` and `plan`, status, next step (with its `cue`) or `needs_next_step`, subquests with progress, and the ids proposals need. For a practice: `rhythm`, `this_week` (`done`/`target`) and `next_session_on`. |
 | `get_history` | `days?` (1–90, default 7) | Captures, completed steps and quests, XP gained, accepted proposals — each tagged with who did it (`user` or the connector). |
 | `get_stats` | — | Level, XP, current/best streak, lifetime counts, unlocked achievements. |
 | `list_proposals` | `status?`: `pending` (default), `accepted`, `rejected`, `edited` | Proposals so far and what the user decided. Check before proposing again. |
@@ -43,11 +43,12 @@ is waiting for them in the app.
 | Tool | Input | What accepting it does |
 |---|---|---|
 | `propose_add_quest` | `title`, `why?`, `next_step?`, `track?`, `due_at?`, `reason` | Creates the quest in the inbox, or tracked (then `next_step` is required and a slot must be free or a park proposal pending). |
-| `propose_set_next_step` | `quest_id`, `text`, `due_at?`, `reason` | Replaces the quest's (or subquest's) current step. Refused for a quest whose visible step belongs to a focused subquest — propose it for that subquest. |
+| `propose_set_next_step` | `quest_id`, `text`, `due_at?`, `cue?`, `reason` | Replaces the quest's (or subquest's) current step, optionally with a when/where cue. Refused for a quest whose visible step belongs to a focused subquest — propose it for that subquest. For a practice it changes the next session. |
 | `propose_complete_step` | `quest_id`, `step_id?`, `reason` | Marks the step done (+XP); the app then asks the user for the next step. |
 | `propose_add_subquest` | `parent_id`, `title`, `next_step?`, `reason` | Adds a subquest to a top-level quest. |
-| `propose_schedule_step` | `quest_id`, `step_id?`, `due_at` (or `null` to clear), `alarm?`, `reason` | Sets or removes the step's date/time and alarm. |
+| `propose_schedule_step` | `quest_id`, `step_id?`, `due_at` (or `null` to clear), `alarm?`, `cue?`, `reason` | Sets or removes the step's date/time and alarm, and/or its cue (`""` removes it). With a `cue` and no `due_at`, the date is left alone. |
 | `propose_park_quest` | `quest_id`, `reason` | Moves the quest to Later, freeing a tracked slot. |
+| `propose_add_practice` | `title`, `rhythm`, `first_step`, `why?`, `reason` | Creates a practice in the inbox: an ongoing habit with a rhythm that never completes. `rhythm` is `{"kind":"daily"}`, `{"kind":"weekdays","days":["mon","wed","fri"]}` or `{"kind":"per_week","times":3}`, optionally with `"reminder":"07:30"`. Tracking it later uses a slot like any quest. |
 
 `due_at` is ISO-8601 (`2026-10-02T09:00`, interpreted in the server's `TZ`,
 or with an explicit offset).
@@ -66,7 +67,11 @@ Rules worth knowing:
 - The tracked cap is hard. `track: true` needs a free slot or a pending
   `propose_park_quest` (each pending park frees one slot only once).
 - A second pending park for the same quest is refused.
-- Titles are 1–500 characters and step text 1–2,000; reasons are kept up to 1,000.
+- Titles are 1–500 characters and step text 1–2,000; reasons are kept up to 1,000;
+  cues up to 200.
+- Practices have no subquests: `propose_add_subquest` on a practice is refused.
+- AI clients can read a quest's obstacle and plan but can't propose them: they are
+  the user's own words (D-1111).
 
 ## Limits and logging
 
