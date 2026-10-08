@@ -126,7 +126,7 @@
     <!-- Undo (B2) -->
     <string name="undo">Undo</string>
     <string name="undo_offer">Done · %1$s</string>
-    <string name="undo_done">Undone. The step is open.</string>
+    <string name="undo_done">Undone. Everything is as it was.</string>
     <string name="undo_refused">That can\'t be undone now: something about it changed since.</string>
     <string name="undo_notification_title">Done · %1$s</string>
     <string name="undo_notification_text">Tap Undo within 5 minutes if that was a slip.</string>
@@ -162,8 +162,6 @@
     <string name="practice_times">%1$d× a week</string>
     <string name="practice_reminder">Reminder on session days</string>
     <string name="practice_reminder_none">No reminder</string>
-    <string name="practice_first_session">First session</string>
-    <string name="practice_session_reminder">Practice · %1$s</string>
     <string name="practice_never_complete">Practices never complete. Park or drop it when it has served you.</string>
 
     <!-- Capture: a pasted list -->

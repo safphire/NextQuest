@@ -131,6 +131,8 @@ class QuestViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Every completion made in the app can be undone for 10 seconds (B2). */
     private fun offerUndo(change: Change) {
+        // An accepted proposal is a decision, not a slip: its completion isn't offered for undo.
+        if (change.events.any { it.type == EventTypes.PROPOSAL_ACCEPTED || it.type == EventTypes.PROPOSAL_EDITED }) return
         val e = change.events.lastOrNull { it.type == EventTypes.STEP_COMPLETED || it.type == EventTypes.QUEST_COMPLETED } ?: return
         val label = when (e.type) {
             EventTypes.STEP_COMPLETED -> Events.decode(StepCompleted.serializer(), e.payload)?.let { p ->

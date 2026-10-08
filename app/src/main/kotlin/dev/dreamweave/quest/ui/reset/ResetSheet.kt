@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -138,7 +139,7 @@ internal fun ResetChoice(icon: ImageVector, title: String, hint: String, onClick
 @Composable
 private fun BreathePane(run: BreatheRun?, onStart: (Int) -> Unit, onStop: () -> Unit, onDone: () -> Unit) {
     val c = Quest.colors
-    var minutes by rememberSaveable { mutableStateOf(3) }
+    var minutes by rememberSaveable { mutableIntStateOf(3) }
     var started by rememberSaveable { mutableStateOf(false) }
     Text(stringResource(R.string.breathe_title), style = MaterialTheme.typography.titleLarge, color = c.text)
     if (run == null && !started) {

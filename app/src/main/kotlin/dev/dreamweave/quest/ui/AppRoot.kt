@@ -154,8 +154,11 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
     LaunchedEffect(vm) {
         vm.events.collect { if (it is UiEvent.UndoOffer) undoOffer = it else toasts.add(it) }
     }
-    LaunchedEffect(undoOffer) {
+    // While the quest-complete celebration is up, it carries the Undo; the 10 s start after it.
+    val celebrating = toasts.firstOrNull() is UiEvent.QuestCompleted
+    LaunchedEffect(undoOffer, celebrating) {
         val offer = undoOffer ?: return@LaunchedEffect
+        if (celebrating) return@LaunchedEffect
         delay(10_000)
         if (undoOffer === offer) undoOffer = null
     }
@@ -296,7 +299,11 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
     LaunchedEffect(pendingFocusDone) {
         val stepId = pendingFocusDone ?: return@LaunchedEffect
         pendingFocusDone = null
-        if (vm.state.value?.let { ReminderPlan.isOpenStep(it, stepId) } == true) actions.done(stepId)
+        if (vm.state.value?.let { ReminderPlan.isOpenStep(it, stepId) } == true) {
+            actions.done(stepId)
+        } else {
+            vm.message("That step has already moved on. The focus still counts.")
+        }
     }
 
     // The digest and streak guard are on by default: they are the first reminders, so this is
@@ -474,7 +481,18 @@ fun AppRoot(vm: QuestViewModel, external: ExternalRequest?, onExternalHandled: (
     }
 
     if (current is UiEvent.QuestCompleted) {
-        QuestCompleteCelebration(current, onDismiss = { if (toasts.isNotEmpty()) toasts.removeAt(0) })
+        val offer = undoOffer
+        QuestCompleteCelebration(
+            current,
+            onDismiss = { if (toasts.isNotEmpty()) toasts.removeAt(0) },
+            onUndo = offer?.let {
+                {
+                    undoOffer = null
+                    if (toasts.isNotEmpty()) toasts.removeAt(0)
+                    vm.undo(it.eventId)
+                }
+            },
+        )
     }
 
     if (showCapture) {

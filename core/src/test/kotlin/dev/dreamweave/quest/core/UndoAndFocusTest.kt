@@ -91,9 +91,29 @@ class UndoAndFocusTest {
         repeat(Limits.DEFAULT_CAP) { t.tracked("Q$it") }
         val first = t.state.tracked.first().id
         val done = t.complete(t.stepOf(first), finish = true)
-        t.tracked("Newcomer")
+        // Tracked from Later, so no counter moves: only the cap stops the undo.
+        val newcomer = t.capture("Newcomer", QuestStatus.LATER)
+        t.step(newcomer, "go")
+        t.track(newcomer)
         assertTrue(t.rejected(Events.completionUndone(CompletionUndone(done))).contains("slots are full"))
         assertEquals(Limits.DEFAULT_CAP, t.state.tracked.size)
+    }
+
+    @Test
+    fun undoIsRefusedAfterALaterCompletion_soAchievementDatesStayExact() {
+        val s = Scenario()
+        val a = s.tracked("A", "a1")
+        val b = s.tracked("B", "b1")
+        val first = s.complete(s.stepOf(a), next = "a2")
+        s.advanceMinutes(1)
+        s.complete(s.stepOf(b), next = "b2")
+        assertTrue(s.rejected(Events.completionUndone(CompletionUndone(first))).contains("changed"))
+        // A capture in between changes no counters: the undo still works.
+        val t = Scenario()
+        val q = t.tracked("Q", "q1")
+        val e = t.complete(t.stepOf(q), next = "q2")
+        t.capture("An idea")
+        t.ok(Events.completionUndone(CompletionUndone(e)))
     }
 
     @Test
@@ -243,6 +263,11 @@ class UndoAndFocusTest {
         assertEquals(QuestStatus.LATER, s.state.quests.getValue(a).status)
         assertTrue(s.rejected(Events.freshStart(FreshStart(keepQuestId = a, parkOthers = true))).contains("tracked"))
         assertTrue(s.state.history.any { it.text == "Fresh start" })
+        // A clean slate: no "Stuck?" right after it.
+        s.advanceHours(24 * 5)
+        assertTrue(Views.isStuck(s.state, b, s.now))
+        s.ok(Events.freshStart(FreshStart()))
+        assertFalse(Views.isStuck(s.state, b, s.now))
     }
 
     @Test

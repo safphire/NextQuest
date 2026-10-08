@@ -27,11 +27,22 @@ class UndoPropertyTest {
             val rnd = Random(7_000 + round)
             val s = Scenario(tz, "2026-03-02T08:00:00Z", Ids.newId(Instant.parse("2026-03-02T08:00:00Z").toEpochMilliseconds(), rnd))
             val removed = HashSet<String>()
+            // A completion left for later: undone (or refused) a few events after it happened.
+            var lateTarget: String? = null
             fun id() = Ids.newId(s.now, rnd)
             repeat(rnd.nextInt(30, 120)) {
                 s.now += rnd.nextLong(60_000, 20 * 3_600_000L)
                 val st = s.state
                 val roots = st.quests.values.filter { it.isRoot && it.status.isOpen }.sortedBy { it.id }
+                lateTarget?.takeIf { rnd.nextInt(4) == 0 }?.let { target ->
+                    lateTarget = null
+                    if (s.commit(Events.completionUndone(CompletionUndone(target))) is Commits.Result.Ok) {
+                        removed += target
+                        removed += s.log.last().id
+                        undos++
+                    }
+                    return@repeat
+                }
                 when (rnd.nextInt(9)) {
                     0 -> s.commit(Events.questCreated(QuestCreated(id(), "Q", rhythm = if (rnd.nextInt(4) == 0) Rhythm(RhythmKind.DAILY) else null)))
                     1 -> roots.randomOrNull(rnd)?.let { s.commit(Events.stepSet(StepSet(id(), it.id, "s${rnd.nextInt(99)}", cue = "here".takeIf { rnd.nextBoolean() }))) }
@@ -60,7 +71,9 @@ class UndoPropertyTest {
                                 ),
                             ),
                         )
-                        if (r is Commits.Result.Ok && rnd.nextBoolean()) {
+                        if (r is Commits.Result.Ok && rnd.nextInt(4) == 0) {
+                            lateTarget = s.log.last().id
+                        } else if (r is Commits.Result.Ok && rnd.nextBoolean()) {
                             val completion = s.log.last()
                             s.now += rnd.nextLong(1_000, 10_000)
                             if (s.commit(Events.completionUndone(CompletionUndone(completion.id))) is Commits.Result.Ok) {
@@ -80,6 +93,6 @@ class UndoPropertyTest {
             assertEquals(Stats.recount(withUndo), withUndo.counters, "recount round $round")
             assertEquals(Achievement.unlockedBy(withUndo.counters), withUndo.achievements.keys, "achievements round $round")
         }
-        assertTrue(undos > 100, "the generator must actually exercise undo ($undos)")
+        assertTrue(undos > 80, "the generator must actually exercise undo ($undos)")
     }
 }

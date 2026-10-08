@@ -116,12 +116,15 @@ object Notifications {
      * only on days they want a session, and at most one gentle "Stuck?" mention.
      */
     fun digest(context: Context, cards: List<TodayCard>, streak: Int) {
-        val title = if (cards.isEmpty()) "Nothing tracked today" else "Today: ${cards.size} quest${if (cards.size == 1) "" else "s"}"
-        val lines = cards.filter { it.practice == null || it.practice!!.dueToday }.map { c ->
+        val today = cards.filter { it.practice == null || it.practice!!.dueToday }
+        val title = if (today.isEmpty()) "Nothing due today" else "Today: ${today.size} quest${if (today.size == 1) "" else "s"}"
+        val stuck = cards.firstOrNull { it.stuck }?.let { "Stuck? “${it.quest.title}” might just need a smaller step." }
+        // At most 7 lines; the one "Stuck?" line always fits.
+        val lines = today.take(if (stuck != null) 6 else 7).map { c ->
             val step = c.step?.let { s -> s.text + (s.cue?.let { " ($it)" } ?: "") } ?: "needs a next step"
             if (c.practice != null) "${c.quest.title} — session: $step" else "${c.quest.title} — $step"
-        } + listOfNotNull(cards.firstOrNull { it.stuck }?.let { "Stuck? “${it.quest.title}” might just need a smaller step." })
-        val style = NotificationCompat.InboxStyle().also { s -> lines.take(7).forEach { s.addLine(it) } }
+        } + listOfNotNull(stuck)
+        val style = NotificationCompat.InboxStyle().also { s -> lines.forEach { s.addLine(it) } }
         if (streak > 0) style.setSummaryText("Streak: $streak day${if (streak == 1) "" else "s"}")
         val capture = NotificationCompat.Action(0, "Capture", openApp(context, 11, action = MainActivity.ACTION_CAPTURE))
         post(

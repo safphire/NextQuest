@@ -74,15 +74,17 @@ class BreatheService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val c = (application as QuestApp).container
         val run = c.breathe.run.value
-        if (run == null) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         try {
+            // Foreground first, always (required after startForegroundService), then stop if it's gone.
             ServiceCompat.startForeground(
-                this, ID, notification(run),
+                this, ID, notification(run ?: BreatheRun(System.currentTimeMillis(), 1)),
                 if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
             )
+            if (run == null) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
         } catch (e: Exception) {
             Log.w(BreatheController.TAG, "breathe notification not shown", e)
             stopSelf()

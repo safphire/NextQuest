@@ -52,7 +52,6 @@ import dev.dreamweave.quest.BuildConfig
 import dev.dreamweave.quest.R
 import dev.dreamweave.quest.core.Limits
 import dev.dreamweave.quest.core.Views
-import androidx.compose.ui.res.stringResource
 import dev.dreamweave.quest.core.QuestState
 import dev.dreamweave.quest.data.AppSettings
 import dev.dreamweave.quest.data.ThemeMode

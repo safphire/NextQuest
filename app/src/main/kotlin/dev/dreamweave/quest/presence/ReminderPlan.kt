@@ -35,6 +35,8 @@ object ReminderPlan {
         if (settings.streakGuardEnabled) out += Planned.StreakGuard(nextDaily(now, settings.streakGuardMinutes, zone))
         for (step in state.steps.values) {
             if (step.reminderDismissed || !isOpenStep(state, step.id)) continue
+            // A practice's sessions are reminded by its rhythm (below), never by a date.
+            if (state.quests[step.questId]?.isPractice == true) continue
             val at = reminderTime(step) ?: continue
             if ((firedAt[step.id] ?: Long.MIN_VALUE) >= at) continue // already fired for this time
             out += Planned.StepReminder(maxOf(at, now), step.id, step.alarm)

@@ -12,6 +12,8 @@ import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import dev.dreamweave.quest.QuestApp
+import dev.dreamweave.quest.core.Focus
+import dev.dreamweave.quest.core.FocusSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,15 +33,19 @@ class FocusService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val c = (application as QuestApp).container
         val s = c.focus.session.value
-        if (s == null || s.ended) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         try {
+            // Always in the foreground first (Android requires it after startForegroundService),
+            // even when the block was stopped meanwhile and the service ends at once.
+            val shown = s?.takeIf { !it.ended } ?: FocusSession.start("", "", "", Focus.MIN_MINUTES, System.currentTimeMillis())
             ServiceCompat.startForeground(
-                this, FocusNotifications.ID_RUNNING, FocusNotifications.running(this, s),
+                this, FocusNotifications.ID_RUNNING, FocusNotifications.running(this, shown),
                 if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
             )
+            if (s == null || s.ended) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
         } catch (e: Exception) {
             // Not allowed to run in the foreground right now: the end alarm still fires.
             Log.w(FocusTimer.TAG, "focus notification not shown", e)

@@ -122,6 +122,12 @@ class FocusLayerTest {
         val paired = Breakdown.prompt(s.state, q, paired = true)
         assertTrue("propose_add_subquest" in paired && q in paired)
         assertFailsWith<IllegalArgumentException> { Breakdown.prompt(s.state, Ids.newId(), false) }
+        // A practice gets session ideas, never subquests (it can't have any).
+        val p = Ids.newId(s.now)
+        s.ok(Events.questCreated(QuestCreated(p, "Sing", rhythm = daily)))
+        val practice = Breakdown.prompt(s.state, p, paired = true)
+        assertTrue("session ideas" in practice)
+        assertFalse("propose_add_subquest" in practice)
     }
 
     @Test

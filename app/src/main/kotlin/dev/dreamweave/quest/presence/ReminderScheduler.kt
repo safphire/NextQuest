@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import dev.dreamweave.quest.MainActivity
 import dev.dreamweave.quest.core.QuestState
+import dev.dreamweave.quest.core.Undo
 import dev.dreamweave.quest.data.AppSettings
 import kotlinx.datetime.TimeZone
 
@@ -37,9 +38,12 @@ class ReminderScheduler(private val context: Context) {
         // Cancel what is no longer planned.
         val previous = prefs.getStringSet(KEY_ARMED, emptySet()).orEmpty()
         for (old in previous - keys) cancel(old)
-        // Forget fired markers of steps that no longer exist, are done or were replaced.
+        // Forget fired markers of steps that no longer exist, were replaced, or were done longer
+        // ago than a completion can be undone: an undone step must not ring a second time.
         val stale = prefs.all.keys.filter { key ->
-            key.startsWith("fired:") && state.steps[key.removePrefix("fired:")].let { it == null || it.isDone || it.superseded }
+            key.startsWith("fired:") && state.steps[key.removePrefix("fired:")].let {
+                it == null || it.superseded || (it.isDone && now - (it.doneAt ?: 0) > Undo.WINDOW_MS)
+            }
         }
         if (stale.isNotEmpty()) prefs.edit().apply { stale.forEach { remove(it) } }.apply()
         for (p in plan) arm(p)

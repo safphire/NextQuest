@@ -101,7 +101,7 @@ fun ToastHost(event: UiEvent?, onDismiss: () -> Unit, modifier: Modifier = Modif
 
 /** The celebratory moment for finishing a quest. */
 @Composable
-fun QuestCompleteCelebration(event: UiEvent.QuestCompleted, onDismiss: () -> Unit) {
+fun QuestCompleteCelebration(event: UiEvent.QuestCompleted, onDismiss: () -> Unit, onUndo: (() -> Unit)? = null) {
     val c = Quest.colors
     val t = rememberInfiniteTransition(label = "confetti")
     val phase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), label = "phase")
@@ -133,6 +133,12 @@ fun QuestCompleteCelebration(event: UiEvent.QuestCompleted, onDismiss: () -> Uni
                 Text("+${event.xp} XP", style = MonoNumber, color = c.violet)
                 Spacer(Modifier.height(20.dp))
                 LimeButton("Onward", onClick = onDismiss, modifier = Modifier.width(200.dp))
+                // The Undo bar would sit under this dialog, so the celebration carries it (B2).
+                if (onUndo != null) {
+                    TextButton(onClick = onUndo, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(androidx.compose.ui.res.stringResource(dev.dreamweave.quest.R.string.undo), color = c.textSecondary)
+                    }
+                }
             }
         }
     }

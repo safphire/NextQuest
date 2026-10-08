@@ -24,6 +24,14 @@ object Breakdown {
                 appendLine("Parts I already have:")
                 kids.forEach { k -> appendLine("- ${k.title}" + if (k.status == QuestStatus.DONE) " (done)" else "") }
             }
+            if (root.isPractice) {
+                // Practices have no subquests: ask for smaller sessions instead.
+                appendLine("This is an ongoing practice (${Practices.label(root.rhythm!!)}), not a project.")
+                appendLine()
+                appendLine("Suggest 3 to 7 small, concrete session ideas I could rotate through. The first one must be doable in under 10 minutes.")
+                append("Reply with one idea per line and nothing else.")
+                return@buildString
+            }
             appendLine()
             appendLine("Suggest 3 to 7 small, concrete subquests, in order. The first one must be doable in under 10 minutes.")
             appendLine("Keep each one short: a verb and an object, no explanations.")

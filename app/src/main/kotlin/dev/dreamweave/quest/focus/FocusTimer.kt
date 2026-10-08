@@ -109,7 +109,8 @@ class FocusTimer(
         val r = Calm.attempt(TAG, "crediting a focus block") { actions.focusBlockDone(s.questId, s.stepId, s.minutes) }
         val xp = (r as? CommitResult.Ok)?.let { (it.change.after.xp - it.change.before.xp).toInt() } ?: 0
         setEndXp(xp)
-        runCatching { FocusNotifications.ended(context, ended) }
+        // Stopped or answered while the credit was being written: no chime for a block that's gone.
+        if (_session.value?.ended == true) runCatching { FocusNotifications.ended(context, ended) }
         true
     }
 
@@ -122,7 +123,8 @@ class FocusTimer(
 
     /** "Keep going": another block of the same length on the same step. */
     fun keepGoing(): Boolean {
-        val s = _session.value ?: return false
+        // Only from an ended block (a stale notification button must not restart a running one).
+        val s = _session.value?.takeIf { it.ended } ?: return false
         write(null)
         return start(s.questId, s.stepId, s.stepText, s.minutes)
     }
