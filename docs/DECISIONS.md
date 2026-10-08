@@ -475,3 +475,14 @@ A phone that imported a lost phone's snapshot pushes those events too. The
 server refuses only events that belong to another *active* paired device or
 to the server itself (D-504). That still stops one live device from occupying
 another live device's sequence numbers.
+
+## v1.1 — Fixes, essentials and the focus layer
+
+The v1.1 brief is appended to [SPEC.md](SPEC.md). Same rules as v1: the principles
+decide, and every judgment call is recorded here.
+
+### D-1101 · Where v1.1 lives
+PR #1 (`v1`) was merged into the default branch, so v1.1 starts from the default
+branch. The build session is bound to the branch `ccr-ef0da54c-hdyvtk`, so v1.1 is
+developed and pushed there (instead of a branch named `v1.1`) and its draft PR
+targets the default branch.
