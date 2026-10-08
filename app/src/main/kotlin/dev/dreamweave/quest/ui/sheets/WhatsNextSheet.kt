@@ -144,7 +144,7 @@ fun WhatsNextSheet(
                     if (finishPlan.ownerIsRoot) "Complete quest · +${Xp.QUEST} XP" else "Complete subquest · +${Xp.SUBQUEST} XP",
                     onClick = {
                         if (finishPlan.ownerIsRoot || !finishPlan.nextRequired) {
-                            closeThen { onConfirm(null, true) }
+                            closeThen { onConfirm(null, true, null, null) }
                         } else {
                             finishingSaved = true
                             text = ""

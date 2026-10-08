@@ -93,7 +93,7 @@ fun ToastHost(event: UiEvent?, onDismiss: () -> Unit, modifier: Modifier = Modif
                         }
                     }
                 }
-                is UiEvent.QuestCompleted -> Unit
+                is UiEvent.QuestCompleted, is UiEvent.UndoOffer -> Unit
             }
         }
     }

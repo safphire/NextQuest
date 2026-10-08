@@ -50,7 +50,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.dreamweave.quest.BuildConfig
 import dev.dreamweave.quest.R
-import dev.dreamweave.quest.R
 import dev.dreamweave.quest.core.Limits
 import dev.dreamweave.quest.core.Views
 import androidx.compose.ui.res.stringResource

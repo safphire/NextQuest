@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.dreamweave.quest.ui.focus
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,6 +32,9 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -108,9 +110,15 @@ fun FocusView(
 ) {
     val c = Quest.colors
     val now = rememberNow()
-    BackHandler(onBack = onClose)
+    // A full-screen dialog of its own: nothing beneath it can be tapped or read out. Back closes
+    // the view; the timer keeps running.
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false),
+    ) {
     Column(
-        Modifier.fillMaxSize().background(c.background).safeDrawingPadding().padding(24.dp),
+        Modifier.fillMaxSize().background(c.background).safeDrawingPadding().padding(24.dp)
+            .semantics { paneTitle = session.stepText },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -140,6 +148,7 @@ fun FocusView(
                 TextButton(onClick = onStop, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.focus_stop)) }
             }
         }
+    }
     }
 }
 
